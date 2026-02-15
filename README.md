@@ -20,7 +20,7 @@ pip install cocotbext-ral[rdl]
 pip install cocotbext-ral[all]
 
 # Development install (from source)
-git clone https://github.com/<org>/cocotbext-ral.git
+git clone https://github.com/stephencoTT/cocotbext-ral.git
 cd cocotbext-ral
 pip install -e ".[dev]"
 ```
