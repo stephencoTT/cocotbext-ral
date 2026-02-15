@@ -320,6 +320,50 @@ class RAL:
             raise KeyError(f"Field {field_name!r} not found in {reg.name}")
         field.predicted_value = value & field.mask
 
+    def disable_check(self, name_or_addr: Union[str, int], field_name: str = ""):
+        """Disable prediction checking for a register or specific field.
+
+        Args:
+            name_or_addr: Register name or address.
+            field_name: If provided, disable only this field. Otherwise disable
+                all fields in the register.
+        """
+        reg = self._resolve_register(name_or_addr)
+        if reg is None:
+            raise KeyError(f"Register {name_or_addr!r} not found")
+        if field_name:
+            field = reg.get_field(field_name)
+            if field is None:
+                raise KeyError(f"Field {field_name!r} not found in {reg.name}")
+            field.check_enabled = False
+            self.log.debug(f"Disabled check: {reg.hierarchical_name}.{field_name}")
+        else:
+            for f in reg.fields:
+                f.check_enabled = False
+            self.log.debug(f"Disabled check: {reg.hierarchical_name} (all fields)")
+
+    def enable_check(self, name_or_addr: Union[str, int], field_name: str = ""):
+        """Re-enable prediction checking for a register or specific field.
+
+        Args:
+            name_or_addr: Register name or address.
+            field_name: If provided, enable only this field. Otherwise enable
+                all fields in the register.
+        """
+        reg = self._resolve_register(name_or_addr)
+        if reg is None:
+            raise KeyError(f"Register {name_or_addr!r} not found")
+        if field_name:
+            field = reg.get_field(field_name)
+            if field is None:
+                raise KeyError(f"Field {field_name!r} not found in {reg.name}")
+            field.check_enabled = True
+            self.log.debug(f"Enabled check: {reg.hierarchical_name}.{field_name}")
+        else:
+            for f in reg.fields:
+                f.check_enabled = True
+            self.log.debug(f"Enabled check: {reg.hierarchical_name} (all fields)")
+
     def set_hdl_path(self, name_or_addr: Union[str, int], hdl_path: str):
         """Set the backdoor HDL path for a register."""
         reg = self._resolve_register(name_or_addr)

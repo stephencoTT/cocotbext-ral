@@ -161,6 +161,56 @@ class TestPredictor(unittest.TestCase):
         self.assertEqual(fr.actual, 0xABCD)
         self.assertTrue(fr.matched)
 
+    def test_check_enabled_disable_field(self):
+        """Disabling check_enabled on a field skips it during predict_read."""
+        model = self._make_rw_model()
+        pred = Predictor(model)
+        pred.predict_write(0x100, 0xAAAA)
+
+        # Disable checking on the field
+        reg = model.get_register(0x100)
+        reg.fields[0].check_enabled = False
+
+        # Read a mismatched value — should still pass because checking is disabled
+        result = pred.predict_read(0x100, 0xBBBB)
+        self.assertTrue(result.passed)
+        self.assertEqual(len(result.field_results), 0)
+
+    def test_check_enabled_reenable_field(self):
+        """Re-enabling check_enabled restores checking."""
+        model = self._make_rw_model()
+        pred = Predictor(model)
+        pred.predict_write(0x100, 0xAAAA)
+
+        reg = model.get_register(0x100)
+        reg.fields[0].check_enabled = False
+        result = pred.predict_read(0x100, 0xBBBB)
+        self.assertTrue(result.passed)
+
+        # Re-enable and check again — mismatch should be caught
+        reg.fields[0].check_enabled = True
+        result = pred.predict_read(0x100, 0xBBBB)
+        self.assertFalse(result.passed)
+
+    def test_check_enabled_mixed_fields(self):
+        """Only disabled fields are skipped; enabled fields still checked."""
+        model = RegisterModel(name="test")
+        reg = Register("REG", address=0x100, fields=[
+            RegisterField("f0", lsb=0, msb=15, reset_value=0, sw_access=SwAccess.RW),
+            RegisterField("f1", lsb=16, msb=31, reset_value=0, sw_access=SwAccess.RW),
+        ])
+        model.add_register(reg, hierarchical_name="block.REG")
+        pred = Predictor(model)
+        pred.predict_write(0x100, 0xAAAABBBB)
+
+        # Disable f1 only
+        reg.fields[1].check_enabled = False
+
+        # f0 correct, f1 wrong — should pass because f1 is disabled
+        result = pred.predict_read(0x100, 0xCCCCBBBB)
+        self.assertTrue(result.passed)
+        self.assertEqual(len(result.field_results), 1)  # only f0 checked
+
 
 if __name__ == "__main__":
     unittest.main()

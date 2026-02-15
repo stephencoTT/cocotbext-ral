@@ -37,11 +37,12 @@ class RegisterField:
         self.sw_access = sw_access
         self.hdl_path = hdl_path
         self.predicted_value = self.reset_value
+        self.check_enabled = True
 
     @property
     def is_checkable_on_read(self) -> bool:
         """True if the field's predicted value can be checked on a read."""
-        return self.sw_access in (SwAccess.RW, SwAccess.WOCLR)
+        return self.check_enabled and self.sw_access in (SwAccess.RW, SwAccess.WOCLR)
 
     @property
     def is_writable(self) -> bool:
