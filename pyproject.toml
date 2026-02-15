@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cocotbext-ral"
+version = "0.1.0"
+description = "Register Abstraction Layer for cocotb verification"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: cocotb",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+]
+dependencies = []
+
+[project.optional-dependencies]
+cocotb = ["cocotb>=1.8.0", "cocotbext-axi>=0.1.16"]
+rdl = ["systemrdl-compiler>=1.15"]
+dev = ["pytest>=7.0"]
+all = ["cocotbext-ral[cocotb,rdl,dev]"]
+
+[project.urls]
+Homepage = "https://github.com/<org>/cocotbext-ral"
+Issues = "https://github.com/<org>/cocotbext-ral/issues"
+
+[tool.setuptools.packages.find]
+include = ["cocotbext.*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
