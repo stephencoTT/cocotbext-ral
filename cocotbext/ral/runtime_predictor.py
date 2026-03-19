@@ -38,6 +38,10 @@ class RuntimePredictor:
 
     The legacy RegisterField objects remain the source of structural truth.
     RuntimeState holds all mutable prediction state.
+
+    In addition to write prediction, this predictor also applies read side
+    effects for policies such as read-clear and read-set after a successful
+    read comparison.
     """
 
     def __init__(
@@ -97,7 +101,7 @@ class RuntimePredictor:
             policy = self.policy_registry.policy_for(field)
             actual_field = (actual_data >> field.lsb) & field.mask
 
-            if policy.check_on_read(field_state):
+            if policy.check_on_read(field, field_state):
                 expected = field_state.mirrored & field.mask
                 matched = actual_field == expected
                 result.field_results.append(
@@ -116,9 +120,16 @@ class RuntimePredictor:
                     )
                     result.error_messages.append(msg)
                     self.log.error(f"MISMATCH {msg}")
+                else:
+                    self.log.debug(
+                        f"  {reg.hierarchical_name}.{field.name}: OK (0x{actual_field:x})"
+                    )
             else:
                 self.log.debug(
                     f"  {reg.hierarchical_name}.{field.name}: actual=0x{actual_field:x} (not checked)"
                 )
 
+            policy.apply_read_side_effect(field, field_state)
+
+        self.runtime_state.sync_to_legacy_model()
         return result
