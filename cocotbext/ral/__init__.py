@@ -1,7 +1,6 @@
 """Cocotb Register Abstraction Layer (RAL).
 
-Generic, reusable RAL with zero Quasar-specific dependencies. Works with
-standard cocotbext AXI/APB VIPs and generic JSON/RDL register descriptions.
+Generic, reusable RAL with zero Quasar-specific dependencies.
 """
 
 from .version import __version__
@@ -9,7 +8,12 @@ from .register_model import RegisterField, Register, RegisterBlock, RegisterMode
 from .predictor import Predictor, PredictionResult, FieldResult
 from .checker import Checker
 
-# Cocotb-dependent classes — only available in simulation environments
+# Runtime-backed APIs (recommended)
+from .integrated_runtime_ral import IntegratedRuntimeRAL
+from .runtime_ral import RuntimeRAL
+from .safe_runtime_ral import SafeRuntimeRAL
+
+# Cocotb-dependent classes
 try:
     from .monitor import ApbRalMonitor, AxiLiteRalMonitor, AxiRalMonitor
     from .ral import RAL

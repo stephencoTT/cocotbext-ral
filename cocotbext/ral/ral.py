@@ -6,6 +6,7 @@ a cocotbext master is attached.
 """
 
 import logging
+import warnings
 from typing import Optional, Union
 
 import cocotb
@@ -21,6 +22,10 @@ class RAL:
 
     Supports active mode (driving via cocotbext masters), passive monitor
     mode, and backdoor access via HDL paths.
+
+    Note:
+        This class remains supported for compatibility, but it is now the
+        legacy design path. New code should prefer IntegratedRuntimeRAL.
     """
 
     def __init__(
@@ -36,6 +41,11 @@ class RAL:
             model: Populated RegisterModel from any loader.
             dut_handle: cocotb DUT handle, needed only for backdoor access.
         """
+        warnings.warn(
+            "cocotbext.ral.RAL is part of the legacy path. Prefer IntegratedRuntimeRAL for new code.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.name = name
         self.model = model
         self.dut = dut_handle
