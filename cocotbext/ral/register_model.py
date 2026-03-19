@@ -4,16 +4,40 @@ Pure Python — no cocotb dependency. Defines the hierarchical register model
 consisting of fields, registers, register blocks, and a top-level model.
 """
 
-from enum import Enum, auto
+from enum import Enum
 from typing import Dict, List, Optional, Union
 
 
 class SwAccess(Enum):
-    """Software access type for register fields."""
-    RW = auto()
-    RO = auto()
-    WO = auto()
-    WOCLR = auto()
+    """Software-visible access policy for a field.
+
+    Canonical values:
+    - RW
+    - RO
+    - WO
+    - W1C
+    - W1S
+    - RCLR
+    - RSET
+
+    Compatibility aliases:
+    - WOCLR -> W1C
+    - WOSET -> W1S
+    - RC -> RCLR
+    - RS -> RSET
+    """
+
+    RW = "rw"
+    RO = "ro"
+    WO = "wo"
+    W1C = "w1c"
+    WOCLR = "w1c"
+    W1S = "w1s"
+    WOSET = "w1s"
+    RCLR = "rclr"
+    RC = "rclr"
+    RSET = "rset"
+    RS = "rset"
 
 
 class RegisterField:
@@ -27,6 +51,7 @@ class RegisterField:
         reset_value: int = 0,
         sw_access: SwAccess = SwAccess.RW,
         hdl_path: str = "",
+        volatile: bool = False,
     ):
         self.name = name
         self.lsb = lsb
@@ -36,23 +61,32 @@ class RegisterField:
         self.reset_value = reset_value & self.mask
         self.sw_access = sw_access
         self.hdl_path = hdl_path
+        self.volatile = volatile
         self.predicted_value = self.reset_value
         self.check_enabled = True
 
     @property
     def is_checkable_on_read(self) -> bool:
         """True if the field's predicted value can be checked on a read."""
-        return self.check_enabled and self.sw_access in (SwAccess.RW, SwAccess.WOCLR)
+        if self.volatile:
+            return False
+        return self.check_enabled and self.sw_access in (
+            SwAccess.RW,
+            SwAccess.W1C,
+            SwAccess.W1S,
+            SwAccess.RCLR,
+            SwAccess.RSET,
+        )
 
     @property
     def is_writable(self) -> bool:
         """True if software can write to this field."""
-        return self.sw_access in (SwAccess.RW, SwAccess.WO, SwAccess.WOCLR)
+        return self.sw_access in (SwAccess.RW, SwAccess.WO, SwAccess.W1C, SwAccess.W1S)
 
     @property
     def is_volatile(self) -> bool:
-        """True if the field is hardware-driven and unpredictable."""
-        return self.sw_access == SwAccess.RO
+        """True if the field is marked as volatile / hardware-driven."""
+        return self.volatile
 
     def reset(self):
         """Restore predicted value to the reset default."""
@@ -83,7 +117,7 @@ class Register:
         self.fields: List[RegisterField] = fields or []
         self.description = description
         self.hdl_path = hdl_path
-        self.hierarchical_name = name  # overwritten by RegisterModel.add_register()
+        self.hierarchical_name = name
 
     @property
     def size_bytes(self) -> int:
@@ -91,7 +125,6 @@ class Register:
 
     @property
     def predicted_value(self) -> int:
-        """Composite predicted value from all fields."""
         value = 0
         for f in self.fields:
             value |= (f.predicted_value & f.mask) << f.lsb
@@ -99,7 +132,6 @@ class Register:
 
     @property
     def reset_value(self) -> int:
-        """Composite reset value from all fields."""
         value = 0
         for f in self.fields:
             value |= (f.reset_value & f.mask) << f.lsb
@@ -107,20 +139,17 @@ class Register:
 
     @property
     def has_backdoor(self) -> bool:
-        """True if a backdoor HDL path is set on the register or any field."""
         if self.hdl_path:
             return True
         return any(f.hdl_path for f in self.fields)
 
     def get_field(self, name: str) -> Optional[RegisterField]:
-        """Look up a field by name."""
         for f in self.fields:
             if f.name == name:
                 return f
         return None
 
     def get_writable_mask(self) -> int:
-        """Bitmask of all writable bit positions."""
         mask = 0
         for f in self.fields:
             if f.is_writable:
@@ -128,7 +157,6 @@ class Register:
         return mask
 
     def get_checkable_mask(self) -> int:
-        """Bitmask of all checkable-on-read bit positions."""
         mask = 0
         for f in self.fields:
             if f.is_checkable_on_read:
@@ -136,7 +164,6 @@ class Register:
         return mask
 
     def reset(self):
-        """Restore all field predictions to reset values."""
         for f in self.fields:
             f.reset()
 
@@ -183,35 +210,19 @@ class RegisterModel:
         return len(self._by_address)
 
     def add_register(self, reg: Register, hierarchical_name: str = ""):
-        """Add a register to the model.
-
-        Args:
-            reg: The Register object.
-            hierarchical_name: Dot-separated name for name-based lookup.
-                If empty, uses reg.name.
-        """
         self._by_address[reg.address] = reg
         name_key = hierarchical_name or reg.name
-        # Store the full hierarchical name on the register for logging
         reg.hierarchical_name = name_key
         self._by_name[name_key] = reg
-        # Also index by the leaf register name for convenience
         leaf_name = name_key.rsplit(".", 1)[-1] if "." in name_key else name_key
         if leaf_name not in self._by_name:
             self._by_name[leaf_name] = reg
 
     def get_register(self, name_or_addr: Union[str, int]) -> Optional[Register]:
-        """Look up a register by hierarchical name or address.
-
-        For string lookups, tries exact match first, then searches for a
-        suffix match (so you can use just the register name if unambiguous).
-        """
         if isinstance(name_or_addr, int):
             return self._by_address.get(name_or_addr)
-        # Exact match
         if name_or_addr in self._by_name:
             return self._by_name[name_or_addr]
-        # Suffix match: find names ending with the query
         matches = [
             reg for key, reg in self._by_name.items()
             if key.endswith(f".{name_or_addr}") or key == name_or_addr
@@ -224,16 +235,13 @@ class RegisterModel:
         return self._by_address.get(address)
 
     def all_registers(self) -> List[Register]:
-        """Return all registers (deduplicated, since name index may have aliases)."""
         return list(self._by_address.values())
 
     def reset(self):
-        """Restore all register predictions to reset values."""
         for reg in self._by_address.values():
             reg.reset()
 
     def summary(self) -> str:
-        """Human-readable model summary."""
         lines = [f"RegisterModel: {self.name!r} ({self.register_count} registers)"]
         for addr in sorted(self._by_address):
             reg = self._by_address[addr]
