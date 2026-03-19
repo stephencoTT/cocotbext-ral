@@ -4,16 +4,23 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cocotbext-ral"
-version = "0.1.0"
-description = "Register Abstraction Layer for cocotb verification"
+version = "0.2.0"
+description = "Python-native Register Abstraction Layer (RAL) for cocotb with a data-driven runtime architecture"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.8"
+keywords = ["cocotb", "ral", "register model", "verification", "eda"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Framework :: cocotb",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
     "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
 ]
 dependencies = []
