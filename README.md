@@ -10,6 +10,20 @@ It is designed to be:
 - practical — works today with cocotbext AXI/APB
 - extensible — supports custom access semantics, backdoor mapping, and advanced DV flows
 
+## Highlights
+
+- **Runtime-backed architecture** with clear spec/state separation
+- **Safe field writes** that reject unsafe read-modify-write sequences
+- **Backdoor resolution** that scales to replicated blocks and chiplets
+- **Legacy compatibility** for teams migrating from a traditional UVM-style API
+- **Pure-Python introspection** for debug, tooling, and future AI-assisted flows
+
+## Architecture
+
+![Architecture](docs/architecture_diagram.svg)
+
+For a deeper explanation, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/API.md](docs/API.md), and [DESIGN.md](DESIGN.md).
+
 ## Why use this?
 
 In cocotb environments, register handling is usually ad hoc or over-engineered. This project aims for the middle ground:
@@ -77,10 +91,20 @@ See `examples/basic_runtime_ral.py`, `examples/axil_cocotb_demo.py`, `docs/ARCHI
 
 ## Choosing an API
 
-- `RAL` — simplest stable cocotb-facing API
+- `RAL` — simplest stable cocotb-facing API (legacy path)
 - `RuntimeRAL` — runtime-backed architecture
 - `SafeRuntimeRAL` — runtime-backed plus conservative RMW protection
 - `IntegratedRuntimeRAL` — runtime-backed plus backdoor resolver and debug helpers
+
+## API Documentation
+
+See [docs/API.md](docs/API.md) for a practical API reference covering:
+- core model classes
+- legacy / stable APIs
+- runtime-backed APIs
+- backdoor helpers
+- debug helpers
+- loaders and common imports
 
 ## Status
 
