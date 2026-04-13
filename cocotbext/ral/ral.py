@@ -41,11 +41,13 @@ class RAL:
             model: Populated RegisterModel from any loader.
             dut_handle: cocotb DUT handle, needed only for backdoor access.
         """
-        warnings.warn(
-            "cocotbext.ral.RAL is part of the legacy path. Prefer IntegratedRuntimeRAL for new code.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        if type(self) is RAL:
+            warnings.warn(
+                "cocotbext.ral.RAL is part of the legacy path. "
+                "Prefer IntegratedRuntimeRAL for new code.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.name = name
         self.model = model
         self.dut = dut_handle

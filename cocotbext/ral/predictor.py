@@ -11,12 +11,6 @@ from typing import List, Optional
 
 from .register_model import RegisterModel, Register, SwAccess
 
-warnings.warn(
-    "cocotbext.ral.Predictor is part of the legacy path. Prefer RuntimePredictor for new code.",
-    DeprecationWarning,
-    stacklevel=2,
-)
-
 
 @dataclass
 class FieldResult:
@@ -37,6 +31,11 @@ class PredictionResult:
 
 class Predictor:
     def __init__(self, model: RegisterModel, logger_name: str = "ral"):
+        warnings.warn(
+            "Predictor is part of the legacy path. Prefer RuntimePredictor for new code.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.model = model
         self.log = logging.getLogger(f"{logger_name}.predictor")
 
@@ -70,5 +69,9 @@ class Predictor:
                 result.field_results.append(FieldResult(f.name, f.predicted_value, actual_field, matched))
                 if not matched:
                     result.passed = False
+                    result.error_messages.append(
+                        f"{reg.hierarchical_name}.{f.name}: "
+                        f"expected 0x{f.predicted_value:x}, got 0x{actual_field:x}"
+                    )
 
         return result

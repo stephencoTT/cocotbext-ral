@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from .register_model import RegisterField, SwAccess
 from .state import FieldState
+from .volatile_policy import check_allowed as _volatile_check_allowed
 
 
 @dataclass(frozen=True)
@@ -47,9 +48,9 @@ class AccessPolicy:
 
     def check_on_read(self, field: RegisterField, state: FieldState) -> bool:
         """Return True if the field should be checked on reads."""
-        if field.volatile:
+        if not _volatile_check_allowed(field, state):
             return False
-        return state.check_enabled and self.sw_access in (
+        return self.sw_access in (
             SwAccess.RW,
             SwAccess.W1C,
             SwAccess.W1S,

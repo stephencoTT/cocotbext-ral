@@ -43,6 +43,9 @@ class SwAccess(Enum):
 class RegisterField:
     """A single bit-field within a register."""
 
+    # Access types that are inherently volatile (hardware-driven, not software-predictable).
+    _VOLATILE_ACCESS_TYPES = frozenset({SwAccess.RO, SwAccess.RCLR, SwAccess.RSET})
+
     def __init__(
         self,
         name: str,
@@ -51,7 +54,7 @@ class RegisterField:
         reset_value: int = 0,
         sw_access: SwAccess = SwAccess.RW,
         hdl_path: str = "",
-        volatile: bool = False,
+        volatile: Optional[bool] = None,
     ):
         self.name = name
         self.lsb = lsb
@@ -61,7 +64,11 @@ class RegisterField:
         self.reset_value = reset_value & self.mask
         self.sw_access = sw_access
         self.hdl_path = hdl_path
-        self.volatile = volatile
+        # If volatile is not explicitly set, infer from access type.
+        if volatile is None:
+            self.volatile = sw_access in self._VOLATILE_ACCESS_TYPES
+        else:
+            self.volatile = volatile
         self.predicted_value = self.reset_value
         self.check_enabled = True
 

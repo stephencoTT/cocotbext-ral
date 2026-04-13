@@ -2,29 +2,48 @@
 
 ## v0.2.0
 
-### 🚀 Major Features
+### Major Features
 - Introduced runtime-backed RAL architecture (`RuntimeRAL`, `SafeRuntimeRAL`, `IntegratedRuntimeRAL`)
 - Clean separation of register spec vs runtime state
 - Added access policy framework for extensible CSR semantics
+- Full access-type coverage: RW, RO, WO, W1C, W1S, RCLR, RSET
 
-### 🛡️ Safety Improvements
+### Bug Fixes
+- Fixed `Predictor.predict_read()` not populating `error_messages` on mismatch
+- Fixed `RegisterField.is_volatile` not inferring volatility from access type (RO, RCLR, RSET now default to volatile)
+- Fixed deprecation warning firing at import time instead of instantiation
+- Fixed `RAL` deprecation warning firing when instantiated via subclass (`RuntimeRAL`)
+- Fixed `version.py` still reporting 0.1.0
+
+### Safety Improvements
 - Safe field write handling (prevents RMW corruption)
 - Explicit prediction vs check separation
 
-### 🔌 Integration Enhancements
+### Integration Enhancements
+- Integrated `VolatileMixin` into `AccessPolicy.check_on_read()` via `volatile_policy` module functions
 - Backdoor resolver abstraction for scalable designs (chiplets, tiles)
 - Improved cocotb AXI/APB integration examples
 
-### 📚 Documentation
-- Rewritten README with runtime-first positioning
+### Test Coverage
+- Added comprehensive tests for RuntimePredictor (all access types: RW, RO, WO, W1C, W1S, RCLR, RSET)
+- Added tests for RuntimeState, RegisterState, FieldState
+- Added tests for RMW safety assessment (`assess_field_rmw`)
+- Added tests for BackdoorResolver, PrefixBackdoorResolver, MappingBackdoorResolver
+- Added tests for debug helpers (`dump_state`, `diff_state`)
+- Added tests for volatile policy functions and VolatileMixin
+- Total: 136 tests, all passing (up from 52 with 3 failures)
+
+### Documentation
+- Rewritten README with runtime-first positioning and access-type reference table
+- Added `CLAUDE.md` for AI-assisted development guidance
 - Added architecture documentation (`docs/ARCHITECTURE.md`)
 - Added working examples (`examples/`)
 
-### ⚠️ Deprecations
-- `RAL` marked as legacy API (still supported)
-- `Predictor` marked as legacy (use runtime predictor instead)
+### Deprecations
+- `RAL` marked as legacy API (still supported, warns on direct instantiation)
+- `Predictor` marked as legacy (warns on instantiation, use RuntimePredictor instead)
 
-### 🧠 Internal Improvements
+### Internal Improvements
 - Data-driven runtime state model
 - Cleaner separation of responsibilities across layers
 
