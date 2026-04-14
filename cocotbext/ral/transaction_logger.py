@@ -102,7 +102,7 @@ class TransactionLogger:
     def __init__(self, dest: Union[str, IO] = "register_txns.log"):
         if isinstance(dest, str):
             self._owns_file = True
-            self._file: IO = open(dest, "w")
+            self._file: IO = open(dest, "w", encoding="utf-8")
             self._path = dest
         else:
             self._owns_file = False

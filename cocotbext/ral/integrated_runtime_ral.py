@@ -253,17 +253,20 @@ class IntegratedRuntimeRAL(SafeRuntimeRAL):
         if field_obj is None:
             raise KeyError(f"Field {field_name!r} not found in {reg.name}")
 
-        mirror_before = reg.predicted_value
+        # Safety check FIRST — raise before any bus activity
         assessment = assess_field_rmw(reg, field_name)
+        if not assessment.safe:
+            reasons = "; ".join(assessment.reasons)
+            raise RuntimeError(
+                f"Unsafe RMW on {reg.hierarchical_name}.{field_name}: {reasons}"
+            )
 
-        # Drive the actual write_field via the parent class
-        # (SafeRuntimeRAL.write_field does: assess -> read -> modify -> write)
-        # We need the RMW read value, so we capture it by reading first
+        mirror_before = reg.predicted_value
+
+        # RMW sequence: read current value, modify target field, write back
         rmw_read_value = await self.read(reg.address)
         mask = field_obj.mask << field_obj.lsb
         full_write_value = (rmw_read_value & ~mask) | ((value & field_obj.mask) << field_obj.lsb)
-
-        # Now do the write (skip the parent write_field since we already did the read)
         await self.write(reg.address, full_write_value)
 
         mirror_after = reg.predicted_value
