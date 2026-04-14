@@ -12,6 +12,7 @@ from .checker import Checker
 from .integrated_runtime_ral import IntegratedRuntimeRAL
 from .runtime_ral import RuntimeRAL
 from .safe_runtime_ral import SafeRuntimeRAL
+from .transaction_logger import TransactionLogger
 
 # Cocotb-dependent classes
 try:
