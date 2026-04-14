@@ -47,11 +47,18 @@ class IntegratedRuntimeRAL(SafeRuntimeRAL):
     # Master attachment (captures interface path for logging)
     # ------------------------------------------------------------------
 
-    def attach_master(self, master, protocol: str = "apb"):
-        """Attach a cocotbext VIP master and record its HDL path for logging."""
+    def attach_master(self, master, protocol: str = "apb", interface: str = ""):
+        """Attach a cocotbext VIP master and record its HDL path for logging.
+
+        Args:
+            master: A cocotbext master instance.
+            protocol: One of "apb", "axil", "axi".
+            interface: HDL path of the bus interface (e.g. "quasar_soc.sim_axi").
+                If not provided, the logger will attempt to extract it from the
+                master object (best-effort).
+        """
         super().attach_master(master, protocol)
-        # Try to extract the HDL path from the master's bus object
-        self._interface_path = self._extract_interface_path(master)
+        self._interface_path = interface or self._extract_interface_path(master)
 
         if self._txn_logger is not None:
             self._txn_logger.write_header(
