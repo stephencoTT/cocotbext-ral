@@ -7,7 +7,7 @@ a cocotbext master is attached.
 
 import logging
 import warnings
-from typing import Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import cocotb
 
@@ -161,6 +161,133 @@ class RAL:
         mask = field.mask << field.lsb
         new_value = (current & ~mask) | ((value & field.mask) << field.lsb)
         await self.write(reg.address, new_value)
+
+    # ------------------------------------------------------------------
+    # Bulk / pattern-driven access
+    # ------------------------------------------------------------------
+
+    async def write_many(
+        self,
+        values: Dict[Union[str, int], int],
+        *,
+        sort: bool = True,
+        best_effort: bool = False,
+    ) -> Dict[Union[str, int], Optional[Exception]]:
+        """Write many registers in one call.
+
+        Args:
+            values: Mapping of register name or address to value.
+            sort: When True (default), writes are issued in ascending-address
+                order regardless of ``values`` insertion order, which gives
+                deterministic waveforms. Pass False to preserve insertion
+                order.
+            best_effort: When True, a failing write is captured in the
+                returned dict instead of raising, and the remaining writes
+                still run. When False (default), the first failure raises
+                and later writes do not happen.
+
+        Returns:
+            Dict keyed by the original ``values`` keys with each value set
+            to ``None`` on success or the caught exception on failure.
+        """
+        resolved: List[Tuple[Union[str, int], Optional[Register], int]] = []
+        for key, value in values.items():
+            reg = self._resolve_register(key) if isinstance(key, (str, int)) else None
+            if reg is None and not isinstance(key, int) and not best_effort:
+                raise KeyError(f"Register {key!r} not found")
+            resolved.append((key, reg, value))
+
+        if sort:
+            resolved.sort(key=lambda t: (t[1].address if t[1] else (t[0] if isinstance(t[0], int) else 2**63),))
+
+        results: Dict[Union[str, int], Optional[Exception]] = {}
+        for key, reg, value in resolved:
+            try:
+                addr = reg.address if reg is not None else key
+                await self.write(addr, value)
+                results[key] = None
+            except Exception as exc:
+                results[key] = exc
+                if not best_effort:
+                    raise
+        return results
+
+    async def write_pattern(
+        self,
+        pattern: str,
+        value: int,
+        *,
+        regex: Optional[str] = None,
+    ) -> List[str]:
+        """Write ``value`` to every register whose hierarchical name matches.
+
+        ``pattern`` is an fnmatch-style glob (``"DMA*.CTRL"``) unless
+        ``regex`` is given, in which case ``pattern`` is ignored and
+        ``regex`` is applied via ``re.search``. Matching registers are
+        written in ascending-address order.
+
+        Raises ``KeyError`` if no register matches; pass a tighter pattern
+        if you want to allow empty matches.
+
+        Returns the list of matched hierarchical names.
+        """
+        regs = self.model.find_registers(
+            name=None if regex is not None else pattern, regex=regex,
+        )
+        if not regs:
+            raise KeyError(f"No registers match pattern {pattern!r}")
+        for reg in regs:
+            await self.write(reg.address, value)
+        return [r.hierarchical_name for r in regs]
+
+    async def write_field_pattern(
+        self,
+        reg_pattern: str,
+        field_name: str,
+        value: int,
+        *,
+        regex: Optional[str] = None,
+    ) -> List[str]:
+        """Write ``value`` to a named field across every register that has it.
+
+        ``reg_pattern`` is matched the same way as :meth:`write_pattern`.
+        Registers that match the pattern but lack a field named
+        ``field_name`` are silently skipped (so the caller can use a broad
+        pattern across heterogeneous instances).
+
+        Raises ``KeyError`` if no register both matches the pattern and
+        contains the target field.
+        """
+        regs = self.model.find_registers(
+            name=None if regex is not None else reg_pattern, regex=regex,
+        )
+        matched = [r for r in regs if r.get_field(field_name) is not None]
+        if not matched:
+            raise KeyError(
+                f"No registers with field {field_name!r} match {reg_pattern!r}"
+            )
+        for reg in matched:
+            await self.write_field(reg.hierarchical_name, field_name, value)
+        return [r.hierarchical_name for r in matched]
+
+    async def read_pattern(
+        self,
+        pattern: str,
+        *,
+        regex: Optional[str] = None,
+    ) -> Dict[str, int]:
+        """Read every register whose hierarchical name matches the pattern.
+
+        Returns a dict keyed by hierarchical name, in ascending-address
+        order. Prediction checking applies to each read exactly as it would
+        for a single-register read.
+        """
+        regs = self.model.find_registers(
+            name=None if regex is not None else pattern, regex=regex,
+        )
+        if not regs:
+            raise KeyError(f"No registers match pattern {pattern!r}")
+        return {r.hierarchical_name: await self.read(r.address) for r in regs}
 
     async def read_field(self, reg_name: str, field_name: str) -> int:
         """Read a register and extract a single field value.

@@ -69,6 +69,10 @@ class Transaction:
     rmw_mask: Optional[int] = None
     rmw_safe: Optional[bool] = None
     rmw_reasons: List[str] = field(default_factory=list)
+    # Bus-level sub-transactions captured during an RMW group (populated on
+    # WRITE_FIELD entries when begin_rmw()/end_rmw() wraps the internal read
+    # and write-back).
+    substeps: List["Transaction"] = field(default_factory=list)
     # Backdoor
     backdoor_path: str = ""
     # Phase annotation
@@ -84,6 +88,23 @@ class Transaction:
 
 _VERSION = "0.2.0"
 _SEPARATOR = "-" * 72
+
+
+def _substep_summary(txn: Transaction) -> str:
+    """Render a compact one-line summary of an RMW sub-transaction."""
+    if txn.operation == "READ":
+        check = ""
+        if txn.status.startswith("PASS"):
+            check = "  (PASS)"
+        elif txn.status.startswith("FAIL"):
+            check = "  (FAIL)"
+        elif txn.status.startswith("SKIP"):
+            check = "  (SKIP)"
+        return (f"READ   @ {txn.sim_time:<10s} 0x{txn.address:08X} "
+                f"-> 0x{txn.data:08X}{check}")
+    # WRITE
+    return (f"WRITE  @ {txn.sim_time:<10s} 0x{txn.address:08X} "
+            f"<- 0x{txn.data:08X}")
 
 
 class TransactionLogger:
@@ -118,6 +139,9 @@ class TransactionLogger:
         self._first_time: Optional[str] = None
         self._last_time: Optional[str] = None
         self._transactions: List[Transaction] = []
+        # When non-None, read/write txns are buffered as children of the
+        # next WRITE_FIELD entry instead of being emitted standalone.
+        self._rmw_substeps: Optional[List[Transaction]] = None
 
     # ------------------------------------------------------------------
     # Header / footer
@@ -182,13 +206,10 @@ class TransactionLogger:
         backdoor_path: str = "",
         phase: str = "",
     ) -> Transaction:
-        self._txn_count += 1
-        self._writes += 1
         sim_time = _sim_time_str()
-        self._track_time(sim_time)
 
         txn = Transaction(
-            txn_id=self._txn_count,
+            txn_id=0,  # filled in below if emitted standalone
             sim_time=sim_time,
             operation="WRITE",
             model_path=reg.hierarchical_name if reg else f"<unmapped 0x{address:08x}>",
@@ -204,6 +225,16 @@ class TransactionLogger:
             backdoor_path=backdoor_path,
             phase=phase,
         )
+
+        if self._rmw_substeps is not None:
+            # Buffered as an RMW child; the parent WRITE_FIELD will render it.
+            self._rmw_substeps.append(txn)
+            return txn
+
+        self._txn_count += 1
+        self._writes += 1
+        txn.txn_id = self._txn_count
+        self._track_time(sim_time)
         self._transactions.append(txn)
         self._emit_write(txn)
         return txn
@@ -225,26 +256,23 @@ class TransactionLogger:
         backdoor_path: str = "",
         phase: str = "",
     ) -> Transaction:
-        self._txn_count += 1
-        self._reads += 1
         sim_time = _sim_time_str()
-        self._track_time(sim_time)
 
         if not checking_enabled:
             status = "SKIP  (checking disabled for this register)"
-            self._skipped += 1
+            status_bucket = "skipped"
         elif passed is None:
             status = "UNCHECKED"
-            self._skipped += 1
+            status_bucket = "skipped"
         elif passed:
             status = f"PASS  (expected 0x{expected_full:X}, got 0x{data:X})"
-            self._passed += 1
+            status_bucket = "passed"
         else:
             status = f"FAIL  (expected 0x{expected_full:X}, got 0x{data:X})"
-            self._failed += 1
+            status_bucket = "failed"
 
         txn = Transaction(
-            txn_id=self._txn_count,
+            txn_id=0,
             sim_time=sim_time,
             operation="READ",
             model_path=reg.hierarchical_name if reg else f"<unmapped 0x{address:08x}>",
@@ -262,6 +290,22 @@ class TransactionLogger:
             expected_full=expected_full,
             error_messages=error_messages or [],
         )
+
+        if self._rmw_substeps is not None:
+            # Buffered as an RMW child; counters update when the parent emits.
+            self._rmw_substeps.append(txn)
+            return txn
+
+        self._txn_count += 1
+        self._reads += 1
+        txn.txn_id = self._txn_count
+        self._track_time(sim_time)
+        if status_bucket == "passed":
+            self._passed += 1
+        elif status_bucket == "failed":
+            self._failed += 1
+        else:
+            self._skipped += 1
         self._transactions.append(txn)
         self._emit_read(txn)
         return txn
@@ -288,6 +332,11 @@ class TransactionLogger:
         sim_time = _sim_time_str()
         self._track_time(sim_time)
 
+        # Consume any buffered RMW sub-transactions so they render as children
+        # of this WRITE_FIELD entry.
+        substeps = self._rmw_substeps or []
+        self._rmw_substeps = None
+
         txn = Transaction(
             txn_id=self._txn_count,
             sim_time=sim_time,
@@ -307,12 +356,40 @@ class TransactionLogger:
             rmw_mask=field_obj.mask << field_obj.lsb,
             rmw_safe=rmw_safe,
             rmw_reasons=rmw_reasons or [],
+            substeps=substeps,
             backdoor_path=backdoor_path,
             phase=phase,
         )
         self._transactions.append(txn)
         self._emit_write_field(txn)
         return txn
+
+    # ------------------------------------------------------------------
+    # RMW grouping
+    # ------------------------------------------------------------------
+
+    def begin_rmw(self) -> None:
+        """Start buffering read/write entries as RMW children.
+
+        While a group is active, any call to :meth:`log_read` or
+        :meth:`log_write` stores the transaction in an internal buffer
+        instead of emitting it standalone. The next call to
+        :meth:`log_write_field` consumes the buffer and renders the
+        children nested under the field-write summary.
+
+        Typical callers are :class:`IntegratedRuntimeRAL` — test code does
+        not normally invoke this directly.
+        """
+        self._rmw_substeps = []
+
+    def end_rmw(self) -> None:
+        """End the current RMW group without consuming the buffer.
+
+        Use only to clean up when a group is opened but never closed by a
+        matching :meth:`log_write_field` (for example, if an exception
+        is raised mid-group). Any buffered sub-transactions are discarded.
+        """
+        self._rmw_substeps = None
 
     # ------------------------------------------------------------------
     # Phase annotation
@@ -409,5 +486,9 @@ class TransactionLogger:
         w(f"  RMW Safety : {safe_str}\n")
         w(f"  Status     : {txn.status}\n")
         w(f"  Mirror     : 0x{txn.mirror_before:08X} -> 0x{txn.mirror_after:08X}\n")
+        if txn.substeps:
+            w(f"  Bus traffic:\n")
+            for sub in txn.substeps:
+                w(f"    {_substep_summary(sub)}\n")
         w("\n")
         self._file.flush()

@@ -37,7 +37,26 @@ await ral.write_field("CTRL", "enable", 1)
 en = await ral.read_field("CTRL", "enable")
 ```
 
-### Prediction control
+### Mirror update modes
+
+The RAL keeps a mirror (aka "predicted value") of every field. Three APIs
+mutate the mirror, differing in whether they drive the bus and whether they
+respect access-policy semantics.
+
+| API | Bus traffic? | Mirror update style | When to use |
+|---|---|---|---|
+| `await ral.write(reg, data)` | **Yes** — drives the bus | Applies access policy (W1C clears, WO stores, RO no-op) | Normal SW write from this RAL. |
+| `ral.notify_external_write(addr, data)` | No | Applies access policy | Another agent (firmware, a second master) did a SW-style write; keep the mirror honest. |
+| `ral.set_predicted(reg, value)` / `set_field_predicted(reg, field, v)` | No | **Raw overwrite** — ignores policy | Hardware drove a change (e.g. `hwset` / `hwclr`) and you want the mirror to reflect reality. |
+
+"Predicted" and "mirror" refer to the same internal shadow — they're used
+interchangeably in logs and method names.
+
+Concrete differences for a W1C field whose mirror currently reads `0x0`:
+
+- `set_predicted(STAT, 0x01)` → mirror becomes `0x01` (bit forced set).
+- `notify_external_write(STAT, 0x01)` → mirror stays `0x00` (W1C policy: writing 1 clears, so 0→0).
+- `await ral.write(STAT, 0x01)` → same as above *and* the bus transaction is driven.
 
 ```python
 # Set predicted value manually
@@ -55,6 +74,82 @@ ral.notify_external_write(0x100, 0xAB)
 # Reset model to defaults
 ral.reset()
 ```
+
+### Search and bulk access
+
+Searching the register model and driving bulk transactions is built into
+the RAL so test code doesn't have to hand-roll loops over instance-indexed
+hierarchies (e.g. `DMA0..DMA7`).
+
+**Model-level search (pure query, no cocotb needed):**
+
+```python
+# All DMA CTRL registers across every instance.
+ctrls = model.find_registers(name="chip.DMA*.CTRL")
+
+# Regex form for more complex matches.
+stats = model.find_registers(regex=r"DMA[0-3]\.STATUS")
+
+# All registers containing at least one W1C field.
+w1c_regs = model.find_registers(access=SwAccess.W1C)
+
+# Narrow the search to a subtree.
+dma3 = model.find_registers(hierarchy_prefix="chip.DMA3")
+
+# Compose any of the above with an arbitrary predicate.
+wide = model.find_registers(predicate=lambda r: r.size_bytes == 8)
+
+# (register, field) pairs — useful for "walk every RO field".
+ro = model.find_fields(access=SwAccess.RO)
+# Combine filters: every W1C status bit across the DMAs.
+dma_w1c = model.find_fields(
+    reg_name="chip.DMA*.STATUS",
+    access=SwAccess.W1C,
+)
+
+# Group registers by instance (e.g. DMA0 -> [CTRL, STATUS, ADDR]).
+by_engine = model.group_by(lambda r: r.hierarchical_name.split(".")[1])
+```
+
+**RAL-level bulk access (drives transactions):**
+
+```python
+# Same value to every matched register.
+await ral.write_pattern("chip.DMA*.CTRL", 0x1)
+
+# Same field value across every register that has that field.
+await ral.write_field_pattern("chip.DMA*.CTRL", "enable", 1)
+
+# Readback every DMA status in one call.
+status = await ral.read_pattern("chip.DMA*.STATUS")
+# {"chip.DMA0.STATUS": 0x2, "chip.DMA1.STATUS": 0x0, ...}
+
+# Heterogeneous bulk write. Address-sorted by default.
+await ral.write_many({
+    "chip.DMA0.ADDR": 0x1000,
+    "chip.DMA1.ADDR": 0x2000,
+    "chip.DMA2.ADDR": 0x3000,
+})
+
+# Collect errors instead of raising on first failure.
+results = await ral.write_many(values, best_effort=True)
+failed = {k: e for k, e in results.items() if e is not None}
+```
+
+**Semantics reference:**
+
+| API | Returns | If no match |
+|---|---|---|
+| `model.find_registers(...)` | `List[Register]` sorted by address | `[]` |
+| `model.find_fields(...)` | `List[(Register, RegisterField)]` sorted by `(addr, lsb)` | `[]` |
+| `model.group_by(key)` | `Dict[Any, List[Register]]` (groups sorted by address) | `{}` |
+| `await ral.write_pattern(pat, val)` | `List[str]` matched names | raises `KeyError` |
+| `await ral.write_field_pattern(pat, field, val)` | `List[str]` names that *contain* the field | raises `KeyError` |
+| `await ral.read_pattern(pat)` | `Dict[str, int]` in address order | raises `KeyError` |
+| `await ral.write_many(values, sort=True, best_effort=False)` | `Dict[key, Optional[Exception]]` | fail-fast raises; `best_effort=True` captures and continues |
+
+`name=` args are **fnmatch globs** (`*`, `?`, `[...]`) unless you pass
+`regex=` instead. The two are mutually exclusive.
 
 ### Backdoor access
 
@@ -82,6 +177,30 @@ ral.set_txn_phase("Phase 1: Reset value check")
 ral.write_txn_summary()
 ral.close_txn_log()
 ```
+
+**RMW entries are grouped.** A single `write_field(reg, field, value)` call
+performs a read-modify-write but produces **one** `WRITE_FIELD` log entry.
+The internal bus read and write-back are rendered as nested child lines
+under a `Bus traffic:` section, so each field write is one numbered
+transaction rather than three:
+
+```
+--- TXN #079 @ 1.90us -----------------------------------------------
+  Operation  : WRITE_FIELD (RMW)
+  Model Path : edc_biu_top.edc_biu.CTRL
+  Field      : RSVD
+  Field Value: 0x1
+  Full Write : 0x00000001  (read 0x00000000, mask 0x00000001)
+  RMW Safety : SAFE (all neighbors are RW)
+  Mirror     : 0x00000000 -> 0x00000001
+  Bus traffic:
+    READ   @ 1.88us     0x00000008 -> 0x00000000  (PASS)
+    WRITE  @ 1.90us     0x00000008 <- 0x00000001
+```
+
+Advanced: the `TransactionLogger.begin_rmw()` / `end_rmw()` hooks expose
+the buffering mechanism for custom wrappers. Typical test code never calls
+these directly — `IntegratedRuntimeRAL.write_field()` uses them internally.
 
 ### Debug
 
