@@ -1,31 +1,175 @@
-# Integration and Loaders
+# Integration, Loaders, and Utilities
 
-## JSON Loader
+## JSON loader
+
+Loads a `RegisterModel` from RDL-generated JSON.
 
 ```python
 from cocotbext.ral.adapters import load_json
 
-model = load_json("registers.json")
+model = load_json("registers.json", model_name="my_ip")
+print(f"Loaded {model.register_count} registers")
 ```
 
-## RDL Loader
+Expected JSON structure:
+
+```json
+{
+  "type": "addrmap",
+  "inst_name": "my_ip",
+  "addr_offset": 0,
+  "children": [
+    {
+      "type": "reg",
+      "inst_name": "CTRL",
+      "addr_offset": 0,
+      "regsize": 32,
+      "children": [
+        {
+          "type": "field",
+          "inst_name": "enable",
+          "lsb": 0, "msb": 0,
+          "reset": 0,
+          "sw_access": "rw",
+          "woclr": 0
+        }
+      ]
+    }
+  ]
+}
+```
+
+The `woclr` flag: `sw_access="rw"` + `woclr=1` maps to `SwAccess.W1C`.
+
+## RDL loader
+
+Loads from SystemRDL source. Requires `systemrdl-compiler`.
 
 ```python
 from cocotbext.ral.adapters import load_rdl
 
-model = load_rdl("regs.rdl")
+model = load_rdl(
+    "regs.rdl",
+    top_name="my_ip",           # top-level addrmap name
+    incdir=["deps/rdl/"],       # include directories
+    model_name="my_ip",
+)
 ```
 
-## Backdoor Resolver
+## Backdoor resolvers
+
+### BackdoorResolver (base)
+
+Returns `hdl_path` from the register/field spec directly.
 
 ```python
-resolver = PrefixBackdoorResolver("dut.tile0")
-ral = IntegratedRuntimeRAL("tile0", model, backdoor_resolver=resolver)
+from cocotbext.ral.backdoor import BackdoorResolver
+
+resolver = BackdoorResolver()
+path = resolver.resolve_register_path(register)  # returns hdl_path or None
 ```
 
-## Debug Helpers
+### PrefixBackdoorResolver
+
+Prepends an instance prefix to spec paths. Ideal for tiled/replicated designs.
 
 ```python
+from cocotbext.ral.backdoor import PrefixBackdoorResolver
+
+resolver = PrefixBackdoorResolver(prefix="dut.gen_x[3].gen_y[4].tile")
+
+# Spec hdl_path "ctrl_reg" -> "dut.gen_x[3].gen_y[4].tile.ctrl_reg"
+path = resolver.resolve_register_path(register)
+```
+
+### MappingBackdoorResolver
+
+Explicit name-to-path dictionaries for custom mappings.
+
+```python
+from cocotbext.ral.backdoor import MappingBackdoorResolver
+
+resolver = MappingBackdoorResolver(
+    register_paths={"block.CTRL": "dut.custom_path.ctrl_reg"},
+    field_paths={"block.CTRL.enable": "dut.custom_path.ctrl_reg.en_bit"},
+)
+```
+
+## Transaction logger
+
+Writes detailed per-transaction records to a file.
+
+```python
+from cocotbext.ral import IntegratedRuntimeRAL
+
+# Enable with default filename
+ral = IntegratedRuntimeRAL("ip", model, txn_log=True)   # -> register_txns.log
+
+# Enable with custom path
+ral = IntegratedRuntimeRAL("ip", model, txn_log="custom.log")
+
+# Enable with file object
+ral = IntegratedRuntimeRAL("ip", model, txn_log=open("out.log", "w"))
+```
+
+### Log output format
+
+```
+--- TXN #001 @ 150.25us --------------------------------------------------------
+  Operation  : WRITE
+  Model Path : block.subsystem.CTRL
+  Address    : 0x00000100
+  Data       : 0xDEADBEEF
+  Size       : 32-bit
+  Protocol   : AXI
+  Interface  : dut.axi_master
+  Status     : OK
+  Mirror     : 0x00000000 -> 0xDEADBEEF
+  Fields:
+    [31: 0] data             = 0xDEADBEEF  (was 0x0)
+```
+
+### Control methods
+
+```python
+ral.set_txn_phase("Phase 1: Reset check")   # annotate subsequent transactions
+ral.write_txn_summary()                      # write summary block
+ral.close_txn_log()                          # summary + close file
+```
+
+## Debug helpers
+
+```python
+# Dump all runtime state (addresses, field mirrored/desired/check values)
 print(ral.dump_runtime_state())
-print(ral.diff_runtime_state(actual, addr))
+
+# Compare expected vs actual for one register
+print(ral.diff_runtime_state(actual=0xCAFEBABE, address=0x100))
+```
+
+## Volatile policy
+
+```python
+from cocotbext.ral.volatile_policy import is_field_volatile, check_allowed
+
+# Check if a field is volatile
+is_field_volatile(field)  # True for RO, RCLR, RSET (by default)
+
+# Check if prediction checking is allowed
+check_allowed(field, field_state)  # False if volatile or check_enabled=False
+```
+
+## Checker
+
+Scoreboard for accumulating prediction results.
+
+```python
+from cocotbext.ral.checker import Checker
+
+checker = Checker(name="my_ip")
+checker.check(prediction_result)
+
+print(checker.report())
+assert not checker.has_errors()
+checker.raise_on_errors()
 ```

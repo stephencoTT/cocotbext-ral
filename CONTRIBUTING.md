@@ -1,34 +1,35 @@
-# Contributing to cocotbext-ral
-
-Thanks for contributing.
+# Contributing
 
 ## Development setup
 
-Clone the repo, create a virtual environment, install editable dependencies, and run the tests.
+```bash
+git clone https://github.com/stephencoTT/cocotbext-ral.git
+cd cocotbext-ral
+git checkout refactor/data-driven-state-v0
+pip install -e .[dev]
+pytest
+```
 
 ## Design principles
 
-This project is evolving toward a data-driven runtime architecture:
+- Register specs are structural truth (immutable-ish)
+- Runtime state holds mutable per-instance data
+- Access semantics live in policy helpers
+- Backdoor mapping is resolved at integration time
+- Transaction logging is optional and zero-overhead when disabled
 
-- register specs remain structural truth
-- runtime state holds mirrored and check state
-- access semantics live in policy helpers
-- backdoor mapping is resolved at integration time
+## Adding a new SwAccess type
 
-Please prefer incremental changes that preserve the stable API unless the change is explicitly for the experimental runtime path.
+1. Add value to `SwAccess` enum in `register_model.py`
+2. Add write behavior in `AccessPolicy.apply_write()`
+3. Add read side-effect in `AccessPolicy.apply_read_side_effect()`
+4. Add to `check_on_read()` checkable set if applicable
+5. Update `_VOLATILE_ACCESS_TYPES` in `RegisterField` if inherently volatile
+6. Add tests in `tests/test_runtime_predictor_comprehensive.py` and `tests/test_access_policies.py`
 
 ## Pull request guidelines
 
-- keep changes focused
-- add or update tests for behavioral changes
-- prefer conservative semantics over surprising magic
-- document new access policy behavior clearly
-- include examples when adding a new public feature
-
-## Helpful contribution areas
-
-- richer CSR access semantics
-- JSON and SystemRDL metadata extensions
-- cocotb integration tests
-- monitor robustness for interleaved AXI traffic
-- documentation and examples
+- Keep changes focused
+- Add or update tests for behavioral changes
+- Include examples when adding a new public feature
+- Run `pytest` -- all 146 tests must pass

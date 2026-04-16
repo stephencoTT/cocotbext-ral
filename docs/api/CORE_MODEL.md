@@ -1,94 +1,103 @@
 # Core Model API
 
-This section covers the structural register model used by both the legacy and runtime-backed paths.
+## SwAccess
 
-## `RegisterModel`
-
-Top-level container for registers.
-
-Common methods:
-- `add_register(reg, hierarchical_name="")`
-- `get_register(name_or_addr)`
-- `get_register_by_address(address)`
-- `all_registers()`
-- `reset()`
-- `summary()`
-
-### Example
+Software access types for register fields.
 
 ```python
-from cocotbext.ral import RegisterModel, Register, RegisterField, SwAccess
+from cocotbext.ral import SwAccess
 
-model = RegisterModel("demo")
-model.add_register(
-    Register(
-        "CTRL",
-        address=0x0,
-        fields=[
-            RegisterField("enable", lsb=0, msb=0, reset_value=0, sw_access=SwAccess.RW),
-            RegisterField("mode", lsb=1, msb=2, reset_value=0, sw_access=SwAccess.RW),
-        ],
-    ),
-    hierarchical_name="CTRL",
+SwAccess.RW      # Read-write
+SwAccess.RO      # Read-only (volatile by default)
+SwAccess.WO      # Write-only
+SwAccess.W1C     # Write-1-to-clear (alias: WOCLR)
+SwAccess.W1S     # Write-1-to-set (alias: WOSET)
+SwAccess.RCLR    # Read-clear (volatile by default, alias: RC)
+SwAccess.RSET    # Read-set (volatile by default, alias: RS)
+```
+
+## RegisterField
+
+A single bit-field within a register.
+
+```python
+from cocotbext.ral import RegisterField, SwAccess
+
+field = RegisterField(
+    name="irq_status",
+    lsb=0,
+    msb=7,
+    reset_value=0xFF,
+    sw_access=SwAccess.W1C,
+    hdl_path="ctrl_reg.irq_status",  # optional, for backdoor access
+    volatile=None,                    # None = auto-infer from access type
 )
 
-ctrl = model.get_register("CTRL")
-print(ctrl.address)
-print(model.summary())
+field.width          # 8
+field.mask            # 0xFF
+field.is_writable     # True (W1C is writable)
+field.is_volatile     # False (W1C is not volatile by default)
+field.is_checkable_on_read  # True
 ```
 
-## `Register`
+Volatile inference: if `volatile` is `None` (default), RO/RCLR/RSET fields are volatile. Explicit `volatile=True/False` overrides this.
 
-Represents a single register.
+## Register
 
-Common properties:
-- `name`
-- `address`
-- `size_bits`
-- `size_bytes`
-- `fields`
-- `hierarchical_name`
-- `reset_value`
-- `predicted_value`
-- `has_backdoor`
-
-Common methods:
-- `get_field(name)`
-- `get_writable_mask()`
-- `get_checkable_mask()`
-- `reset()`
-
-### Example
+A register containing one or more fields.
 
 ```python
-reg = model.get_register("CTRL")
-field = reg.get_field("enable")
-print(reg.reset_value)
-print(field.mask)
+from cocotbext.ral import Register, RegisterField, SwAccess
+
+reg = Register(
+    name="CTRL",
+    address=0x100,
+    size_bits=32,
+    fields=[
+        RegisterField("enable", lsb=0, msb=0, sw_access=SwAccess.RW),
+        RegisterField("status", lsb=8, msb=15, reset_value=0xAA, sw_access=SwAccess.RO),
+        RegisterField("irq", lsb=16, msb=23, reset_value=0xFF, sw_access=SwAccess.W1C),
+    ],
+    hdl_path="",        # optional register-level backdoor path
+    description="",
+)
+
+reg.predicted_value      # composite of all field predicted values
+reg.reset_value          # composite of all field reset values
+reg.has_backdoor         # True if any field or register has hdl_path
+reg.get_field("enable")  # returns RegisterField or None
+reg.get_writable_mask()  # 0x00FF0001 (RW + W1C bits)
+reg.get_checkable_mask() # 0x00FF0001 (RW + W1C; RO is volatile, not checked)
+reg.reset()              # restore all fields to reset values
 ```
 
-## `RegisterField`
+## RegisterModel
 
-Represents a single field within a register.
+Top-level container with address and name indexing.
 
-Common properties:
-- `name`
-- `lsb`
-- `msb`
-- `width`
-- `mask`
-- `reset_value`
-- `sw_access`
-- `hdl_path`
+```python
+from cocotbext.ral import RegisterModel
 
-Legacy mutable properties:
-- `predicted_value`
-- `check_enabled`
+model = RegisterModel("my_ip")
+model.add_register(reg, hierarchical_name="block.subsystem.CTRL")
 
-## `SwAccess`
+# Lookup by address
+ctrl = model.get_register(0x100)
 
-Supported built-in software access types:
-- `RW`
-- `RO`
-- `WO`
-- `WOCLR`
+# Lookup by full hierarchical name
+ctrl = model.get_register("block.subsystem.CTRL")
+
+# Lookup by leaf name (if unambiguous)
+ctrl = model.get_register("CTRL")
+
+# Lookup by suffix
+ctrl = model.get_register("subsystem.CTRL")
+
+# Iterate
+for reg in model.all_registers():
+    print(f"0x{reg.address:08x}: {reg.hierarchical_name}")
+
+model.register_count  # number of registers
+model.reset()         # reset all registers to defaults
+model.summary()       # formatted summary string
+```

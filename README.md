@@ -2,37 +2,31 @@
 
 A Python-native Register Abstraction Layer (RAL) for [cocotb](https://www.cocotb.org/).
 
-`cocotbext-ral` brings a UVM-like register model experience into cocotb -- without the rigidity of SystemVerilog or the overhead of traditional UVM RAL.
+`cocotbext-ral` provides UVM-like register modeling, access-type-aware prediction, and automated checking -- all in pure Python, designed for cocotb hardware verification.
 
-It is designed to be:
-- **data-driven** -- clean separation of register spec vs runtime state
-- **Pythonic** -- simple, inspectable, extensible
-- **practical** -- works today with cocotbext AXI/APB
-- **extensible** -- supports custom access semantics, backdoor mapping, and advanced DV flows
+## Features
 
-## Highlights
-
-- **Runtime-backed architecture** with clear spec/state separation
+- **Runtime-backed architecture** with clean separation of register spec vs mutable state
 - **Full access-type coverage**: RW, RO, WO, W1C, W1S, RCLR, RSET
-- **Smart volatile inference**: RO, RCLR, RSET fields are volatile by default (overridable)
+- **Smart volatile inference**: RO, RCLR, RSET fields default to volatile (overridable)
 - **Safe field writes** that reject unsafe read-modify-write sequences
 - **Backdoor resolution** that scales to replicated blocks and chiplets
-- **Legacy compatibility** for teams migrating from a traditional UVM-style API
-- **Pure-Python introspection** for debug, tooling, and AI-assisted flows
+- **Transaction logging** with detailed per-transaction file output
+- **Pure-Python core** -- model, predictor, and policies work without cocotb
 
 ## Architecture
 
-```text
-RegisterModel (spec, immutable-ish)
+```
+RegisterModel (spec)
         |
-    RuntimeState (mutable per-instance state)
+    RuntimeState (per-instance mutable state)
         |
 RuntimePredictor + AccessPolicy
         |
-   RuntimeRAL --> SafeRuntimeRAL --> IntegratedRuntimeRAL
+RuntimeRAL -> SafeRuntimeRAL -> IntegratedRuntimeRAL
+                                       |          |
+                                  Backdoor    Transaction Log
 ```
-
-For a deeper explanation, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/API.md](docs/API.md), and [DESIGN.md](DESIGN.md).
 
 ## Installation
 
@@ -48,7 +42,9 @@ pip install cocotbext-ral[rdl]      # SystemRDL compiler
 pip install cocotbext-ral[all]      # Everything
 ```
 
-## Quick start (recommended path)
+## Quick start
+
+### With cocotb simulation
 
 ```python
 import cocotb
@@ -59,27 +55,25 @@ from cocotbext.ral.adapters import load_json
 @cocotb.test()
 async def test_registers(dut):
     model = load_json("registers.json")
-    ral = IntegratedRuntimeRAL("my_ip", model, dut_handle=dut)
-    master = AxiLiteMaster(AxiLiteBus.from_prefix(dut, "s_axil"), dut.clk, dut.rst)
-    ral.attach_master(master, protocol="axil")
 
-    await ral.write("CTRL", 1)
+    ral = IntegratedRuntimeRAL("my_ip", model, dut_handle=dut, txn_log=True)
+    master = AxiLiteMaster(AxiLiteBus.from_prefix(dut, "s_axil"), dut.clk, dut.rst)
+    ral.attach_master(master, protocol="axil", interface="dut.s_axil")
+
+    # Write and read with automatic prediction checking
+    await ral.write("CTRL", 0x01)
     val = await ral.read("CTRL")
+
+    # Field-level access with RMW safety
     await ral.write_field("CTRL", "enable", 1)
     en = await ral.read_field("CTRL", "enable")
+
+    # Check results
     ral.raise_on_errors()
+    ral.close_txn_log()
 ```
 
-## Choosing an API
-
-| Class | Use case |
-|---|---|
-| `IntegratedRuntimeRAL` | **Recommended.** Runtime state + RMW safety + backdoor + debug |
-| `SafeRuntimeRAL` | Runtime state + RMW safety checks |
-| `RuntimeRAL` | Runtime state, no RMW checks |
-| `RAL` | Legacy path (still supported, emits deprecation warning) |
-
-## Standalone usage (no cocotb required)
+### Standalone (no cocotb)
 
 The core model, predictor, and policy layers have zero dependencies:
 
@@ -100,13 +94,27 @@ result = pred.predict_read(0x0, 0x01)
 assert result.passed
 ```
 
+## API classes
+
+| Class | Description |
+|---|---|
+| `IntegratedRuntimeRAL` | **Recommended.** Runtime state + RMW safety + backdoor + transaction log |
+| `SafeRuntimeRAL` | Runtime state + RMW safety checks |
+| `RuntimeRAL` | Runtime state-backed prediction |
+| `RuntimePredictor` | Standalone prediction engine (no cocotb needed) |
+| `RuntimeState` | Per-instance mutable register state |
+| `AccessPolicy` | Per-field read/write behavior |
+| `TransactionLogger` | Detailed file-based transaction logging |
+| `BackdoorResolver` | HDL path resolution (base, Prefix, Mapping variants) |
+| `RegisterModel` | Structural register specification |
+
 ## Register loading
 
 ```python
 from cocotbext.ral.adapters import load_json, load_rdl
 
-model = load_json("registers.json")      # RDL-generated JSON
-model = load_rdl("registers.rdl")        # SystemRDL source (requires systemrdl-compiler)
+model = load_json("registers.json")                        # RDL-generated JSON
+model = load_rdl("regs.rdl", top_name="my_ip", incdir=[])  # SystemRDL source
 ```
 
 ## Access types
@@ -123,14 +131,26 @@ model = load_rdl("registers.rdl")        # SystemRDL source (requires systemrdl-
 
 Aliases: `WOCLR`=`W1C`, `WOSET`=`W1S`, `RC`=`RCLR`, `RS`=`RSET`
 
-## API documentation
+## Transaction logging
 
-See [docs/API.md](docs/API.md) for a practical API reference covering:
-- Core model classes
-- Runtime-backed APIs
-- Backdoor helpers
-- Debug helpers
-- Loaders and common imports
+Enable detailed per-transaction file output:
+
+```python
+# Default filename (register_txns.log)
+ral = IntegratedRuntimeRAL("ip", model, txn_log=True)
+
+# Custom path
+ral = IntegratedRuntimeRAL("ip", model, txn_log="my_regs.log")
+
+# Phase annotations
+ral.set_txn_phase("Phase 1: Reset value check")
+await ral.write(addr, value)
+
+# Summary and close
+ral.close_txn_log()
+```
+
+Each transaction entry includes: model path, address, data, protocol, interface HDL path, status (PASS/FAIL/SKIP), mirror state, per-field breakdown, and RMW safety assessment.
 
 ## Testing
 
@@ -139,15 +159,13 @@ pip install -e .[dev]
 pytest
 ```
 
-136 tests covering: register model, legacy predictor, runtime predictor (all access types), access policies, RMW safety, backdoor resolvers, runtime state, volatile policy, debug helpers, checker, and JSON loader.
+146 tests covering: register model, predictor (legacy + runtime, all access types), access policies, RMW safety, backdoor resolvers, runtime state, volatile policy, debug helpers, checker, JSON loader, and transaction logger.
 
-## Status
+## Documentation
 
-The runtime-backed classes (`IntegratedRuntimeRAL`, `SafeRuntimeRAL`, `RuntimeRAL`) are the recommended path. The legacy `RAL` and `Predictor` classes remain supported but emit deprecation warnings on instantiation.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+- [Architecture](docs/ARCHITECTURE.md) -- design overview and key concepts
+- [API Reference](docs/API.md) -- full API documentation with examples
+- [Quick Start](docs/START_GUIDE.md) -- usage examples for all access types
 
 ## License
 

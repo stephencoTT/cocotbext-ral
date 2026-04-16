@@ -7,6 +7,8 @@
 - Clean separation of register spec vs runtime state
 - Added access policy framework for extensible CSR semantics
 - Full access-type coverage: RW, RO, WO, W1C, W1S, RCLR, RSET
+- Optional transaction file logging (`TransactionLogger`) with per-transaction detail
+- Explicit `interface=` parameter on `attach_master()` for HDL path identification
 
 ### Bug Fixes
 - Fixed `Predictor.predict_read()` not populating `error_messages` on mismatch
