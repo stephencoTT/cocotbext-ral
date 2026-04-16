@@ -146,6 +146,81 @@ class TestTransactionLogger(unittest.TestCase):
         self.assertIn("SAFE", output)
         self.assertIn("data", output)
 
+    def test_rmw_group_nests_bus_txns_under_write_field(self):
+        """begin_rmw() buffers child read/write so they render as nested
+        lines under the next WRITE_FIELD entry, and do not get their own
+        TXN numbers."""
+        model, reg = self._make_model()
+        field_obj = reg.fields[0]
+        buf = io.StringIO()
+        logger = TransactionLogger(buf)
+
+        logger.begin_rmw()
+        sub_read = logger.log_read(
+            reg=reg, address=0x100, data=0x0, size_bits=32,
+            protocol="axi", interface="m", mirror_value=0,
+            expected_full=0, passed=True, checking_enabled=True,
+        )
+        sub_write = logger.log_write(
+            reg=reg, address=0x100, data=0x42, size_bits=32,
+            protocol="axi", interface="m", mirror_before=0, mirror_after=0x42,
+        )
+        parent = logger.log_write_field(
+            reg=reg, field_obj=field_obj, field_value=0x42,
+            full_write_value=0x42, rmw_read_value=0x0, size_bits=32,
+            protocol="axi", interface="m",
+            mirror_before=0, mirror_after=0x42, rmw_safe=True,
+        )
+
+        # Children do not get standalone TXN ids.
+        self.assertEqual(sub_read.txn_id, 0)
+        self.assertEqual(sub_write.txn_id, 0)
+        # Parent is the only numbered entry and carries the substeps.
+        self.assertEqual(parent.txn_id, 1)
+        self.assertEqual(len(parent.substeps), 2)
+        self.assertIs(parent.substeps[0], sub_read)
+        self.assertIs(parent.substeps[1], sub_write)
+
+        output = buf.getvalue()
+        # Exactly one TXN header line.
+        self.assertEqual(output.count("--- TXN #"), 1)
+        self.assertIn("Bus traffic:", output)
+        self.assertIn("READ ", output)
+        self.assertIn("WRITE ", output)
+
+        # After consuming, a follow-up write is emitted standalone again.
+        logger.log_write(
+            reg=reg, address=0x100, data=0x7, size_bits=32,
+            protocol="axi", interface="m", mirror_before=0x42, mirror_after=0x7,
+        )
+        self.assertIn("TXN #002", buf.getvalue())
+
+    def test_end_rmw_discards_buffered_children(self):
+        """end_rmw() without a matching log_write_field drops the buffer
+        so no orphaned sub-txns leak into the next entry."""
+        model, reg = self._make_model()
+        buf = io.StringIO()
+        logger = TransactionLogger(buf)
+
+        logger.begin_rmw()
+        logger.log_read(
+            reg=reg, address=0x100, data=0x1, size_bits=32,
+            protocol="axi", interface="m", mirror_value=0,
+            expected_full=0, passed=True, checking_enabled=True,
+        )
+        logger.end_rmw()
+
+        # Buffered read should not appear anywhere.
+        self.assertEqual(buf.getvalue(), "")
+
+        # Subsequent standalone write gets TXN #001 (the buffered read did
+        # not advance the counter).
+        t = logger.log_write(
+            reg=reg, address=0x100, data=0x2, size_bits=32,
+            protocol="axi", interface="m", mirror_before=0, mirror_after=2,
+        )
+        self.assertEqual(t.txn_id, 1)
+
     def test_summary_counts(self):
         model, reg = self._make_model()
         buf = io.StringIO()

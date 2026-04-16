@@ -4,8 +4,10 @@ Pure Python — no cocotb dependency. Defines the hierarchical register model
 consisting of fields, registers, register blocks, and a top-level model.
 """
 
+import fnmatch
+import re as _re
 from enum import Enum
-from typing import Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 
 class SwAccess(Enum):
@@ -243,6 +245,138 @@ class RegisterModel:
 
     def all_registers(self) -> List[Register]:
         return list(self._by_address.values())
+
+    # ------------------------------------------------------------------
+    # Search / grouping helpers
+    # ------------------------------------------------------------------
+
+    def find_registers(
+        self,
+        name: Optional[str] = None,
+        *,
+        regex: Optional[str] = None,
+        access: Optional[SwAccess] = None,
+        hierarchy_prefix: Optional[str] = None,
+        predicate: Optional[Callable[["Register"], bool]] = None,
+    ) -> List["Register"]:
+        """Return registers matching all supplied criteria, sorted by address.
+
+        Args:
+            name: fnmatch-style glob against the register's hierarchical name
+                (e.g. ``"DMA*.CTRL"``). Mutually exclusive with ``regex``.
+            regex: Regular expression matched against the hierarchical name
+                via ``re.search``. Mutually exclusive with ``name``.
+            access: If given, only registers with at least one field whose
+                ``sw_access`` matches are returned.
+            hierarchy_prefix: Restrict search to a subtree; matches
+                hierarchical names equal to ``prefix`` or starting with
+                ``prefix + "."``.
+            predicate: Optional arbitrary filter callable receiving a
+                :class:`Register` and returning ``bool``.
+
+        Returns:
+            List of registers sorted by ascending address.
+        """
+        if name is not None and regex is not None:
+            raise ValueError("Pass either name= or regex=, not both")
+
+        name_matcher: Optional[Callable[[str], bool]] = None
+        if name is not None:
+            name_matcher = lambda s, p=name: fnmatch.fnmatchcase(s, p)
+        elif regex is not None:
+            compiled = _re.compile(regex)
+            name_matcher = lambda s, r=compiled: r.search(s) is not None
+
+        def _matches(reg: "Register") -> bool:
+            if name_matcher is not None and not name_matcher(reg.hierarchical_name):
+                return False
+            if hierarchy_prefix is not None:
+                if not (reg.hierarchical_name == hierarchy_prefix
+                        or reg.hierarchical_name.startswith(hierarchy_prefix + ".")):
+                    return False
+            if access is not None:
+                if not any(f.sw_access == access for f in reg.fields):
+                    return False
+            if predicate is not None and not predicate(reg):
+                return False
+            return True
+
+        results = [reg for reg in self._by_address.values() if _matches(reg)]
+        results.sort(key=lambda r: r.address)
+        return results
+
+    def find_fields(
+        self,
+        name: Optional[str] = None,
+        *,
+        regex: Optional[str] = None,
+        access: Optional[SwAccess] = None,
+        reg_name: Optional[str] = None,
+        hierarchy_prefix: Optional[str] = None,
+        predicate: Optional[Callable[["Register", "RegisterField"], bool]] = None,
+    ) -> List[Tuple["Register", "RegisterField"]]:
+        """Return (register, field) pairs matching all supplied criteria.
+
+        Args:
+            name: fnmatch glob against the field name.
+            regex: Regex against the field name (mutually exclusive with
+                ``name``).
+            access: Filter fields by ``sw_access``.
+            reg_name: fnmatch glob against the owning register's
+                hierarchical name.
+            hierarchy_prefix: Restrict to registers under a subtree.
+            predicate: Arbitrary ``(reg, field) -> bool`` filter.
+
+        Returns:
+            Sorted by ``(register.address, field.lsb)``.
+        """
+        if name is not None and regex is not None:
+            raise ValueError("Pass either name= or regex=, not both")
+
+        reg_candidates = self.find_registers(
+            name=reg_name, hierarchy_prefix=hierarchy_prefix,
+        )
+
+        field_matcher: Optional[Callable[[str], bool]] = None
+        if name is not None:
+            field_matcher = lambda s, p=name: fnmatch.fnmatchcase(s, p)
+        elif regex is not None:
+            compiled = _re.compile(regex)
+            field_matcher = lambda s, r=compiled: r.search(s) is not None
+
+        results: List[Tuple[Register, RegisterField]] = []
+        for reg in reg_candidates:
+            for f in reg.fields:
+                if field_matcher is not None and not field_matcher(f.name):
+                    continue
+                if access is not None and f.sw_access != access:
+                    continue
+                if predicate is not None and not predicate(reg, f):
+                    continue
+                results.append((reg, f))
+        results.sort(key=lambda rf: (rf[0].address, rf[1].lsb))
+        return results
+
+    def group_by(
+        self,
+        key: Callable[["Register"], Any],
+    ) -> Dict[Any, List["Register"]]:
+        """Group registers by an arbitrary key function.
+
+        Typical use is to fold instance-indexed hierarchies into a dict
+        keyed by instance label, e.g.::
+
+            by_engine = model.group_by(
+                lambda r: r.hierarchical_name.split(".")[0]
+            )
+            # {"DMA0": [...], "DMA1": [...], ...}
+
+        Values are address-sorted within each group.
+        """
+        groups: Dict[Any, List[Register]] = {}
+        for reg in sorted(self._by_address.values(), key=lambda r: r.address):
+            groups.setdefault(key(reg), []).append(reg)
+        return groups
 
     def reset(self):
         for reg in self._by_address.values():

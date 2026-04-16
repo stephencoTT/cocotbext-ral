@@ -263,11 +263,19 @@ class IntegratedRuntimeRAL(SafeRuntimeRAL):
 
         mirror_before = reg.predicted_value
 
-        # RMW sequence: read current value, modify target field, write back
-        rmw_read_value = await self.read(reg.address)
-        mask = field_obj.mask << field_obj.lsb
-        full_write_value = (rmw_read_value & ~mask) | ((value & field_obj.mask) << field_obj.lsb)
-        await self.write(reg.address, full_write_value)
+        # RMW sequence: read current value, modify target field, write back.
+        # The internal read and write-back are buffered by the logger and
+        # rendered as children of the WRITE_FIELD entry, so a single field
+        # write is one log entry, not three.
+        self._txn_logger.begin_rmw()
+        try:
+            rmw_read_value = await self.read(reg.address)
+            mask = field_obj.mask << field_obj.lsb
+            full_write_value = (rmw_read_value & ~mask) | ((value & field_obj.mask) << field_obj.lsb)
+            await self.write(reg.address, full_write_value)
+        except BaseException:
+            self._txn_logger.end_rmw()  # discard orphaned children on failure
+            raise
 
         mirror_after = reg.predicted_value
 

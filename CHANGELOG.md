@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+### Search and bulk APIs
+- `RegisterModel.find_registers(name=, regex=, access=, hierarchy_prefix=, predicate=)`
+  returns matching registers sorted by address.
+- `RegisterModel.find_fields(...)` returns `(register, field)` tuples with
+  the same filter kwargs plus `reg_name=`.
+- `RegisterModel.group_by(key_fn)` groups registers by an arbitrary key
+  (e.g. instance prefix for `DMA0..DMA7`).
+- `RAL.write_pattern(pattern, value)`, `write_field_pattern`, and
+  `read_pattern` drive transactions across every matched register.
+- `RAL.write_many(mapping, sort=True, best_effort=False)` writes a dict
+  of heterogeneous registers in one call, address-sorted by default, with
+  fail-fast or best-effort semantics.
+- Patterns are fnmatch globs unless a `regex=` kwarg is passed. Matching
+  is case-sensitive against the register's hierarchical name.
+
+### Transaction log format
+- `write_field` RMW sequences now render as a single numbered `WRITE_FIELD`
+  entry with the internal bus read + write-back nested under a
+  `Bus traffic:` section. Previously each field write produced three
+  separate log entries (READ, WRITE, WRITE_FIELD), making the log verbose
+  and the TXN count misleading. The change applies whenever transaction
+  logging is enabled; no opt-in required.
+- Added `TransactionLogger.begin_rmw()` / `end_rmw()` for wrapping custom
+  RMW sequences. `IntegratedRuntimeRAL.write_field()` uses them internally.
+- `Transaction` dataclass gained a `substeps: List[Transaction]` field
+  holding the nested bus-level children of an RMW entry.
+
+### Documentation
+- Added a "Mirror update modes" table in `docs/api/RUNTIME_API.md`
+  clarifying the distinction between `write()`, `notify_external_write()`,
+  and `set_predicted()` / `set_field_predicted()`: bus traffic vs. no bus
+  traffic, and access-policy-aware vs. raw mirror overwrite.
+
 ## v0.2.0
 
 ### Major Features
