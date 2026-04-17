@@ -1,5 +1,22 @@
 # Architecture
 
+## Motivation
+
+Mixing structural spec data (field layout, reset values, access types)
+with mutable runtime state (predicted value, check enable) inside a
+single `RegisterField` object creates three problems:
+
+- Cannot have multiple RAL instances with different state from one spec.
+- Difficult to extend access semantics (W1C, RCLR, volatile, etc.)
+  without chains of if/elif in the predictor.
+- Tight coupling between predictor and spec objects, making either
+  hard to test or replace in isolation.
+
+The layered design below separates each concern so each layer can be
+unit-tested on its own, one spec can back many instances, and new
+access semantics plug in as a new policy rather than a predictor
+rewrite.
+
 ## Layer diagram
 
 ```

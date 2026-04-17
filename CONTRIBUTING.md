@@ -5,7 +5,7 @@
 ```bash
 git clone https://github.com/stephencoTT/cocotbext-ral.git
 cd cocotbext-ral
-git checkout refactor/data-driven-state-v0
+git checkout main
 pip install -e .[dev]
 pytest
 ```
@@ -32,4 +32,4 @@ pytest
 - Keep changes focused
 - Add or update tests for behavioral changes
 - Include examples when adding a new public feature
-- Run `pytest` -- all 146 tests must pass
+- Run `pytest` -- all 164 tests must pass

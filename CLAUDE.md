@@ -29,7 +29,7 @@ cocotbext/ral/
   adapters/
     json_loader.py           # load_json()
     rdl_loader.py            # load_rdl() (requires systemrdl-compiler)
-tests/                       # 146 pytest unit tests
+tests/                       # 164 pytest unit tests
 examples/                    # Usage examples
 docs/                        # Architecture and API documentation
 ```
@@ -49,7 +49,7 @@ IntegratedRuntimeRAL   (backdoor + txn log + debug)
 python -m pytest tests/ -v
 ```
 
-All 146 tests pass. Tests are pure Python (no cocotb simulation needed).
+All 164 tests pass. Tests are pure Python (no cocotb simulation needed).
 
 ## Key design decisions
 

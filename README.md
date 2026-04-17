@@ -159,13 +159,18 @@ pip install -e .[dev]
 pytest
 ```
 
-146 tests covering: register model, predictor (legacy + runtime, all access types), access policies, RMW safety, backdoor resolvers, runtime state, volatile policy, debug helpers, checker, JSON loader, and transaction logger.
+164 tests covering: register model (including search / group helpers), predictor (legacy + runtime, all access types), access policies, RMW safety, backdoor resolvers, runtime state, volatile policy, debug helpers, checker, JSON loader, and transaction logger.
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md) -- design overview and key concepts
-- [API Reference](docs/API.md) -- full API documentation with examples
-- [Quick Start](docs/START_GUIDE.md) -- usage examples for all access types
+Read in this order:
+
+1. [Quick Start](docs/START_GUIDE.md) -- 10-step walkthrough covering all access types and the common flows.
+2. [Architecture](docs/ARCHITECTURE.md) -- layer-by-layer design and the rationale behind each decision.
+3. API reference (pick what you need):
+   - [Core Model](docs/api/CORE_MODEL.md) -- `RegisterModel`, `Register`, `RegisterField`, `SwAccess`.
+   - [Runtime API](docs/api/RUNTIME_API.md) -- `IntegratedRuntimeRAL`, `SafeRuntimeRAL`, mirror update modes, RMW logging, search / bulk APIs.
+   - [Integration and Loaders](docs/api/INTEGRATION_AND_LOADERS.md) -- JSON/RDL loaders, backdoor resolvers, transaction logging.
 
 ## License
 
