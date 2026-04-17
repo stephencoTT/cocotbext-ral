@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.3.0
 
 ### Search and bulk APIs
 - `RegisterModel.find_registers(name=, regex=, access=, hierarchy_prefix=, predicate=)`

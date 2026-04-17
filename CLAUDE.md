@@ -24,7 +24,7 @@ cocotbext/ral/
   volatile_policy.py        # Volatile field helpers
   debug.py                  # dump_state(), diff_state()
   monitor.py                # ApbRalMonitor, AxiLiteRalMonitor, AxiRalMonitor (requires cocotb)
-  version.py                # __version__ = "0.2.0"
+  version.py                # __version__ (single source of truth)
   experimental.py           # Stable import point for runtime APIs
   adapters/
     json_loader.py           # load_json()

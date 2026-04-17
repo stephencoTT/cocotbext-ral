@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import IO, List, Optional, Union
 
 from .register_model import Register, RegisterField
+from .version import __version__
 
 def _sim_time_str() -> str:
     """Return the current simulation time as a human-readable string."""
@@ -86,7 +87,6 @@ class Transaction:
 # Logger
 # ---------------------------------------------------------------------------
 
-_VERSION = "0.2.0"
 _SEPARATOR = "-" * 72
 
 
@@ -158,7 +158,7 @@ class TransactionLogger:
         w = self._file.write
         bar = "=" * 80
         w(f"{bar}\n")
-        w(f"REGISTER TRANSACTION LOG -- cocotbext-ral v{_VERSION}\n")
+        w(f"REGISTER TRANSACTION LOG -- cocotbext-ral v{__version__}\n")
         w(f"RAL Instance : {ral_name}\n")
         w(f"Protocol     : {protocol.upper()}\n")
         w(f"Interface    : {interface}\n")
