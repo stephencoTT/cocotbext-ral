@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes: legacy path removed
+- Removed the legacy `RAL` class; `RuntimeRAL` is now the standalone base
+  and owns front-door bus access, backdoor, monitor attach, bulk / pattern
+  APIs, and all check-state helpers.
+- Removed the legacy `Predictor` class and `cocotbext/ral/predictor.py`.
+  `PredictionResult` / `FieldResult` now live in
+  `cocotbext.ral.runtime_predictor`. Re-exports from the top-level
+  `cocotbext.ral` package are unchanged.
+- Removed legacy state attributes on spec objects:
+  `RegisterField.predicted_value`, `RegisterField.check_enabled`,
+  `RegisterField.reset()`, `Register.predicted_value`, `Register.reset()`,
+  `RegisterBlock.reset()`, `RegisterModel.reset()`. All mutable mirror
+  state now lives exclusively in `RuntimeState`.
+  `RegisterField.is_checkable_on_read` is retained as a pure spec-level
+  predicate (access type + volatile), no longer consults per-field
+  `check_enabled` -- the runtime layer gates that separately.
+- Removed `RuntimeState.sync_from_legacy_model()` and
+  `sync_to_legacy_model()` plus the calls from `RuntimePredictor`.
+- Top-level exports no longer include `RAL` or `Predictor`.
+
+### Fixes
+- `RuntimeRAL.reset()` now correctly resets the mirror in `RuntimeState`.
+  The previous behavior only reset legacy `RegisterField.predicted_value`
+  (which no longer exists), leaving the runtime mirror stale.
+
+### Additions
+- `RuntimeRAL.disable_check_all()` / `enable_check_all()`: one-call toggle
+  of prediction checking across every register in the model, for users
+  treating the RAL purely as access abstraction + search.
+
 ## v0.3.0
 
 ### Search and bulk APIs

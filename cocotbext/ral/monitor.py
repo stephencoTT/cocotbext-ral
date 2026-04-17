@@ -10,7 +10,7 @@ import logging
 import cocotb
 from cocotb.triggers import RisingEdge
 
-from .predictor import Predictor
+from .runtime_predictor import RuntimePredictor
 from .checker import Checker
 
 
@@ -22,7 +22,7 @@ class ApbRalMonitor:
     observed reads.
     """
 
-    def __init__(self, bus, clock, predictor: Predictor, checker: Checker, name: str = ""):
+    def __init__(self, bus, clock, predictor: RuntimePredictor, checker: Checker, name: str = ""):
         self.bus = bus
         self.clock = clock
         self.predictor = predictor
@@ -71,7 +71,7 @@ class AxiLiteRalMonitor:
     Correlates AW+W channels for writes and AR+R channels for reads.
     """
 
-    def __init__(self, bus, clock, reset, predictor: Predictor, checker: Checker, name: str = ""):
+    def __init__(self, bus, clock, reset, predictor: RuntimePredictor, checker: Checker, name: str = ""):
         self.predictor = predictor
         self.checker = checker
         self.log = logging.getLogger(f"ral.{name}.axil_monitor" if name else "ral.axil_monitor")
@@ -131,7 +131,7 @@ class AxiRalMonitor:
     Handles burst transactions and ID-based matching.
     """
 
-    def __init__(self, bus, clock, reset, predictor: Predictor, checker: Checker, name: str = ""):
+    def __init__(self, bus, clock, reset, predictor: RuntimePredictor, checker: Checker, name: str = ""):
         self.predictor = predictor
         self.checker = checker
         self.log = logging.getLogger(f"ral.{name}.axi_monitor" if name else "ral.axi_monitor")

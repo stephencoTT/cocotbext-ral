@@ -70,12 +70,8 @@ rewrite.
 
 `TransactionLogger` is optional and zero-overhead when disabled. When enabled via `txn_log=`, it intercepts `write()`, `read()`, and `write_field()` calls and writes a detailed record to a file. Each entry includes model path, address, data, protocol, interface, status, mirror state delta, per-field breakdown, and RMW safety assessment.
 
-### Deprecation approach
-
-The legacy `RAL` and `Predictor` classes emit `DeprecationWarning` on instantiation (not on import). `RAL` skips the warning when instantiated via a subclass (e.g. `RuntimeRAL`). The `sync_from_legacy_model()` / `sync_to_legacy_model()` bridges keep both representations in sync during migration.
-
 ## Three tiers
 
-1. **Tier 0 (pure Python, zero dependencies)**: `register_model.py`, `state.py`, `access_policy.py`, `runtime_predictor.py`, `predictor.py`, `checker.py`, `rmw_policy.py`, `backdoor.py`, `debug.py`, `volatile_policy.py`, `transaction_logger.py`, adapters
-2. **Tier 1 (requires cocotb)**: `ral.py`, `runtime_ral.py`, `safe_runtime_ral.py`, `integrated_runtime_ral.py`, `monitor.py`
+1. **Tier 0 (pure Python, zero dependencies)**: `register_model.py`, `state.py`, `access_policy.py`, `runtime_predictor.py`, `checker.py`, `rmw_policy.py`, `backdoor.py`, `debug.py`, `volatile_policy.py`, `transaction_logger.py`, adapters
+2. **Tier 1 (requires cocotb)**: `runtime_ral.py`, `safe_runtime_ral.py`, `integrated_runtime_ral.py`, `monitor.py`
 3. **Tier 2 (optional)**: `rdl_loader.py` requires `systemrdl-compiler`

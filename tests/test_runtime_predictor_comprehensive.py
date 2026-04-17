@@ -235,18 +235,6 @@ class TestRuntimePredictorMixed(unittest.TestCase):
         result = pred.predict_read(0x100, 0xBB)
         self.assertTrue(result.passed)
 
-    def test_sync_to_legacy_after_write(self):
-        """RuntimePredictor syncs state back to legacy RegisterField objects."""
-        model = RegisterModel("test")
-        reg = Register("REG", address=0x100, fields=[
-            RegisterField("data", lsb=0, msb=31, sw_access=SwAccess.RW),
-        ])
-        model.add_register(reg, "block.REG")
-        pred = RuntimePredictor(model)
-        pred.predict_write(0x100, 0xDEADBEEF)
-        # Legacy model should be updated
-        self.assertEqual(reg.fields[0].predicted_value, 0xDEADBEEF)
-
     def test_field_results_populated_on_check(self):
         model = RegisterModel("test")
         reg = Register("REG", address=0x100, fields=[

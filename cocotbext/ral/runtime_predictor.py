@@ -1,8 +1,8 @@
 """Runtime-state-based predictor for cocotbext-ral.
 
-This predictor is the non-breaking migration path toward a fully data-driven
-engine. It leaves the existing Predictor class untouched while providing a
-parallel implementation that operates on RuntimeState + PolicyRegistry.
+Operates on RuntimeState + PolicyRegistry. The spec layer
+(RegisterModel / Register / RegisterField) is immutable structural data;
+all mutable mirror state lives in RuntimeState.
 """
 
 from __future__ import annotations
@@ -77,7 +77,6 @@ class RuntimePredictor:
             policy = self.policy_registry.policy_for(field)
             policy.apply_write(field, field_state, field_data)
 
-        self.runtime_state.sync_to_legacy_model()
 
     def predict_read(self, address: int, actual_data: int, size_bytes: int = 4) -> PredictionResult:
         reg = self.model.get_register_by_address(address)
@@ -131,5 +130,4 @@ class RuntimePredictor:
 
             policy.apply_read_side_effect(field, field_state)
 
-        self.runtime_state.sync_to_legacy_model()
         return result

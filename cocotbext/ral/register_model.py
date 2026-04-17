@@ -71,21 +71,26 @@ class RegisterField:
             self.volatile = sw_access in self._VOLATILE_ACCESS_TYPES
         else:
             self.volatile = volatile
-        self.predicted_value = self.reset_value
-        self.check_enabled = True
+
+    # Access types whose mirror can be prediction-checked on reads. The
+    # runtime layer additionally gates checks on RuntimeState.check_enabled
+    # and the field's volatile flag.
+    _CHECKABLE_ACCESS_TYPES = frozenset({
+        SwAccess.RW, SwAccess.W1C, SwAccess.W1S,
+        SwAccess.RCLR, SwAccess.RSET,
+    })
 
     @property
     def is_checkable_on_read(self) -> bool:
-        """True if the field's predicted value can be checked on a read."""
+        """Spec-level predicate: is this field eligible for read-check?
+
+        True iff the access type allows prediction *and* the field is not
+        volatile. The runtime layer additionally consults
+        :attr:`FieldState.check_enabled` before actually comparing.
+        """
         if self.volatile:
             return False
-        return self.check_enabled and self.sw_access in (
-            SwAccess.RW,
-            SwAccess.W1C,
-            SwAccess.W1S,
-            SwAccess.RCLR,
-            SwAccess.RSET,
-        )
+        return self.sw_access in self._CHECKABLE_ACCESS_TYPES
 
     @property
     def is_writable(self) -> bool:
@@ -96,10 +101,6 @@ class RegisterField:
     def is_volatile(self) -> bool:
         """True if the field is marked as volatile / hardware-driven."""
         return self.volatile
-
-    def reset(self):
-        """Restore predicted value to the reset default."""
-        self.predicted_value = self.reset_value
 
     def __repr__(self):
         return (
@@ -131,13 +132,6 @@ class Register:
     @property
     def size_bytes(self) -> int:
         return self.size_bits // 8
-
-    @property
-    def predicted_value(self) -> int:
-        value = 0
-        for f in self.fields:
-            value |= (f.predicted_value & f.mask) << f.lsb
-        return value
 
     @property
     def reset_value(self) -> int:
@@ -172,10 +166,6 @@ class Register:
                 mask |= f.mask << f.lsb
         return mask
 
-    def reset(self):
-        for f in self.fields:
-            f.reset()
-
     def __repr__(self):
         return (
             f"Register({self.name!r}, addr=0x{self.address:08x}, "
@@ -193,10 +183,6 @@ class RegisterBlock:
 
     def add_register(self, reg: Register):
         self.registers[reg.address] = reg
-
-    def reset(self):
-        for reg in self.registers.values():
-            reg.reset()
 
     def __repr__(self):
         return (
@@ -377,10 +363,6 @@ class RegisterModel:
         for reg in sorted(self._by_address.values(), key=lambda r: r.address):
             groups.setdefault(key(reg), []).append(reg)
         return groups
-
-    def reset(self):
-        for reg in self._by_address.values():
-            reg.reset()
 
     def summary(self) -> str:
         lines = [f"RegisterModel: {self.name!r} ({self.register_count} registers)"]

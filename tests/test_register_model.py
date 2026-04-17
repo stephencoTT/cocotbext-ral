@@ -15,7 +15,6 @@ class TestRegisterField(unittest.TestCase):
         self.assertEqual(f.width, 8)
         self.assertEqual(f.mask, 0xFF)
         self.assertEqual(f.reset_value, 0xAB)
-        self.assertEqual(f.predicted_value, 0xAB)
 
     def test_field_sw_access_properties(self):
         cases = [
@@ -36,13 +35,6 @@ class TestRegisterField(unittest.TestCase):
         self.assertEqual(RegisterField("byte", 0, 7).mask, 0xFF)
         self.assertEqual(RegisterField("word", 0, 31).mask, 0xFFFFFFFF)
 
-    def test_field_reset(self):
-        f = RegisterField("f", lsb=0, msb=7, reset_value=0x42)
-        f.predicted_value = 0xFF
-        self.assertEqual(f.predicted_value, 0xFF)
-        f.reset()
-        self.assertEqual(f.predicted_value, 0x42)
-
 
 class TestRegister(unittest.TestCase):
 
@@ -53,13 +45,6 @@ class TestRegister(unittest.TestCase):
             RegisterField("high", lsb=8, msb=15, reset_value=0x22),
         ]
         return Register("SCRATCH", address=0x1000, size_bits=32, fields=fields)
-
-    def test_register_predicted_value(self):
-        reg = self._make_register()
-        self.assertEqual(reg.predicted_value, 0x2211)
-        reg.fields[0].predicted_value = 0xAA
-        reg.fields[1].predicted_value = 0xBB
-        self.assertEqual(reg.predicted_value, 0xBBAA)
 
     def test_register_reset_value(self):
         reg = self._make_register()
@@ -101,26 +86,17 @@ class TestRegister(unittest.TestCase):
         reg.fields[0].hdl_path = "tb.dut.reg.low"
         self.assertTrue(reg.has_backdoor)
 
-    def test_register_reset(self):
-        reg = self._make_register()
-        reg.fields[0].predicted_value = 0xFF
-        reg.fields[1].predicted_value = 0xFF
-        reg.reset()
-        self.assertEqual(reg.predicted_value, 0x2211)
-
 
 class TestRegisterBlock(unittest.TestCase):
 
-    def test_block_add_and_reset(self):
+    def test_block_add_register(self):
         block = RegisterBlock("smu", base_address=0x1000)
         reg = Register("SCRATCH", address=0x1000, fields=[
             RegisterField("data", lsb=0, msb=31, reset_value=0),
         ])
         block.add_register(reg)
         self.assertIn(0x1000, block.registers)
-        reg.fields[0].predicted_value = 0xDEAD
-        block.reset()
-        self.assertEqual(reg.fields[0].predicted_value, 0)
+        self.assertIs(block.registers[0x1000], reg)
 
 
 class TestRegisterModel(unittest.TestCase):
@@ -162,7 +138,7 @@ class TestRegisterModel(unittest.TestCase):
         self.assertIsNotNone(reg)
         self.assertEqual(reg.address, 0x100)
 
-    def test_model_ambiguous_leaf_returns_none(self):
+    def test_model_ambiguous_leaf_returns_first(self):
         model = RegisterModel(name="ambig")
         r0 = Register("SCRATCH", address=0x100, fields=[
             RegisterField("d", lsb=0, msb=31),
@@ -172,23 +148,10 @@ class TestRegisterModel(unittest.TestCase):
         ])
         model.add_register(r0, hierarchical_name="block_a.SCRATCH")
         model.add_register(r1, hierarchical_name="block_b.SCRATCH")
-        # The leaf "SCRATCH" was indexed for block_a first; block_b skipped
-        # because the leaf already exists. But suffix match finds two.
-        # Direct leaf lookup returns the first one (indexed).
-        # Suffix match: both end with ".SCRATCH" → ambiguous → None
+        # Leaf "SCRATCH" was indexed at first registration; block_a wins.
         result = model.get_register("SCRATCH")
-        # The leaf name was stored for the first registration, so it returns block_a.
-        # This is expected behavior — first-registered leaf wins.
         self.assertIsNotNone(result)
         self.assertEqual(result.address, 0x100)
-
-    def test_model_reset(self):
-        model = self._make_model()
-        for reg in model.all_registers():
-            reg.fields[0].predicted_value = 0xDEAD
-        model.reset()
-        for reg in model.all_registers():
-            self.assertEqual(reg.fields[0].predicted_value, 0)
 
     def test_model_summary(self):
         model = self._make_model()

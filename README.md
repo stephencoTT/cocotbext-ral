@@ -159,7 +159,7 @@ pip install -e .[dev]
 pytest
 ```
 
-164 tests covering: register model (including search / group helpers), predictor (legacy + runtime, all access types), access policies, RMW safety, backdoor resolvers, runtime state, volatile policy, debug helpers, checker, JSON loader, and transaction logger.
+146 tests covering: register model (including search / group helpers), runtime predictor (all access types), access policies, RMW safety, backdoor resolvers, runtime state, volatile policy, debug helpers, checker, JSON loader, transaction logger, and RuntimeRAL construction / reset / check-toggle helpers.
 
 ## Documentation
 

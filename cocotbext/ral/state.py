@@ -1,18 +1,10 @@
-"""Runtime state helpers for a more data-driven cocotb RAL.
+"""Per-instance runtime state for the cocotb RAL.
 
-This module intentionally does not replace the existing RegisterModel yet.
-Instead, it provides a parallel runtime-state representation that can be
-introduced incrementally without breaking the current public API.
-
-The design goal is to separate:
-    * immutable-ish register specification data (name, bit positions, reset,
-      access policy)
-    * per-instance simulation state (mirrored value, desired value,
-      check enable, dirty flag)
-
-That split makes it much easier to support multiple live RAL instances from a
-single spec, richer policy engines, alias registers, and context-dependent
-checking modes.
+Holds the mutable mirror that the predictor and checker read and write.
+``RegisterModel`` / ``Register`` / ``RegisterField`` are the immutable
+structural spec; all per-instance state (mirrored value, desired value,
+check enable, dirty flag) lives here. One spec can back many ``RuntimeRAL``
+instances with their own ``RuntimeState``.
 """
 
 from __future__ import annotations
@@ -97,33 +89,6 @@ class RuntimeState:
     def reset(self) -> None:
         for reg_state in self._registers.values():
             reg_state.reset()
-
-    def sync_from_legacy_model(self) -> None:
-        """Copy values from RegisterField.predicted_value/check_enabled.
-
-        This keeps the new runtime state usable even before the predictor and
-        RAL layers are fully migrated.
-        """
-        for reg in self.model.all_registers():
-            reg_state = self._registers[reg.address]
-            for field in reg.fields:
-                field_state = reg_state.fields[field.name]
-                field_state.mirrored = field.predicted_value
-                field_state.desired = field.predicted_value
-                field_state.check_enabled = field.check_enabled
-
-    def sync_to_legacy_model(self) -> None:
-        """Push runtime state back into the existing RegisterField objects.
-
-        This allows incremental adoption in downstream code that still consumes
-        RegisterField.predicted_value directly.
-        """
-        for reg in self.model.all_registers():
-            reg_state = self._registers[reg.address]
-            for field in reg.fields:
-                field_state = reg_state.fields[field.name]
-                field.predicted_value = field_state.mirrored & field.mask
-                field.check_enabled = field_state.check_enabled
 
     def set_field_mirrored(self, reg_name_or_addr: int | str, field_name: str, value: int) -> None:
         reg = self.model.get_register(reg_name_or_addr)

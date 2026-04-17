@@ -157,28 +157,5 @@ class TestRuntimeState(unittest.TestCase):
         self.assertEqual(rs.fields["enable"].mirrored, 0)
         self.assertEqual(rs.fields["mode"].mirrored, 5)
 
-    def test_sync_from_legacy_model(self):
-        model = self._make_model()
-        state = RuntimeState(model)
-        # Modify legacy model directly
-        reg = model.get_register(0x100)
-        reg.fields[0].predicted_value = 1  # enable
-        reg.fields[0].check_enabled = False
-        state.sync_from_legacy_model()
-        rs = state.get_register_state(0x100)
-        self.assertEqual(rs.fields["enable"].mirrored, 1)
-        self.assertFalse(rs.fields["enable"].check_enabled)
-
-    def test_sync_to_legacy_model(self):
-        model = self._make_model()
-        state = RuntimeState(model)
-        state.set_field_mirrored(0x100, "enable", 1)
-        state.disable_check(0x100, "mode")
-        state.sync_to_legacy_model()
-        reg = model.get_register(0x100)
-        self.assertEqual(reg.fields[0].predicted_value, 1)
-        self.assertFalse(reg.fields[1].check_enabled)
-
-
 if __name__ == "__main__":
     unittest.main()

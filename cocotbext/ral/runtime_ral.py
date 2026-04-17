@@ -1,58 +1,521 @@
-from typing import Union
+"""Runtime-backed Register Abstraction Layer.
 
-from .ral import RAL
+``RuntimeRAL`` is the cocotb-facing base class. It owns a ``RegisterModel``
+(immutable structural spec), a ``RuntimeState`` (mutable mirror / check
+state), a ``RuntimePredictor`` (runs access policies), and a ``Checker``
+(accumulates prediction pass/fail results).
+
+One spec can back many ``RuntimeRAL`` instances with independent state,
+which is the usual pattern for tiled / replicated designs.
+"""
+
+import logging
+from typing import Dict, List, Optional, Tuple, Union
+
+from .register_model import RegisterModel, Register
 from .runtime_predictor import RuntimePredictor
 from .state import RuntimeState
+from .checker import Checker
+from .monitor import ApbRalMonitor, AxiLiteRalMonitor, AxiRalMonitor
 
 
-class RuntimeRAL(RAL):
-    """Runtime-backed Register Abstraction Layer.
+class RuntimeRAL:
+    """Register Abstraction Layer for cocotb-based verification.
 
-    ``RuntimeRAL`` keeps the familiar cocotb-facing RAL API while replacing
-    the legacy predictor path with a runtime-state-based engine.
-
-    Compared to the legacy ``RAL`` class, this implementation introduces a
-    clean separation between:
-
-    - structural register specification data stored in ``RegisterModel``
-    - mutable mirrored / desired / checking state stored in ``RuntimeState``
-
-    This makes the model easier to extend and safer to reuse across multiple
-    instances of the same block.
-
-    Recommended for:
-    - new cocotb verification environments
-    - designs with repeated IP instances
-    - flows that need runtime introspection or custom policy extensions
+    Supports active mode (driving via cocotbext masters), passive monitor
+    mode, and backdoor access via HDL paths. The spec layer is immutable
+    structural data; all per-instance mirror state lives in
+    ``self.runtime_state``.
     """
 
-    def __init__(self, name, model, dut_handle=None):
-        """Create a runtime-backed RAL instance.
+    # ------------------------------------------------------------------
+    # Construction
+    # ------------------------------------------------------------------
+
+    def __init__(
+        self,
+        name: str,
+        model: RegisterModel,
+        dut_handle=None,
+    ):
+        """Create a RuntimeRAL instance.
 
         Args:
-            name: Human-readable instance name used in logs.
-            model: Register specification model.
-            dut_handle: Optional cocotb DUT handle for backdoor access.
+            name: Unique identifier for log output (e.g. "tile_3_4").
+            model: Populated RegisterModel from any loader.
+            dut_handle: cocotb DUT handle, needed only for backdoor access.
         """
-        super().__init__(name, model, dut_handle)
+        self.name = name
+        self.model = model
+        self.dut = dut_handle
+        self.log = logging.getLogger(f"ral.{name}")
+
         self.runtime_state = RuntimeState(model)
-        self._predictor = RuntimePredictor(model, runtime_state=self.runtime_state, logger_name=f"ral.{name}")
+        self._predictor = RuntimePredictor(
+            model, runtime_state=self.runtime_state,
+            logger_name=f"ral.{name}",
+        )
+        self._checker = Checker(logger_name=f"ral.{name}", name=name)
 
-    def disable_check(self, name_or_addr: Union[str, int], field_name: str = ""):
-        """Disable prediction checking for a register or field in runtime state."""
-        self.runtime_state.disable_check(name_or_addr, field_name)
+        self._master = None
+        self._protocol: Optional[str] = None
+        self._monitor = None
 
-    def enable_check(self, name_or_addr: Union[str, int], field_name: str = ""):
-        """Enable prediction checking for a register or field in runtime state."""
-        self.runtime_state.enable_check(name_or_addr, field_name)
+    # ------------------------------------------------------------------
+    # Master attachment (active mode)
+    # ------------------------------------------------------------------
+
+    def attach_master(self, master, protocol: str = "apb"):
+        """Attach a cocotbext VIP master for driving transactions.
+
+        Args:
+            master: A cocotbext master instance. Accepted types:
+                - cocotbext.apb.ApbMaster (protocol="apb")
+                - cocotbext.axi.AxiLiteMaster (protocol="axil")
+                - cocotbext.axi.AxiMaster (protocol="axi")
+            protocol: One of "apb", "axil", "axi".
+        """
+        self._master = master
+        self._protocol = protocol.lower()
+        self.log.info(f"Attached {self._protocol.upper()} master")
+
+    # ------------------------------------------------------------------
+    # Front-door access
+    # ------------------------------------------------------------------
+
+    async def write(self, name_or_addr: Union[str, int], value: int):
+        """Front-door write: drive the bus and update the mirror."""
+        if self._master is None:
+            raise RuntimeError("No master attached. Call attach_master() first.")
+
+        reg = self._resolve_register(name_or_addr)
+        addr = reg.address if reg else name_or_addr
+        size_bytes = reg.size_bytes if reg else 4
+
+        await self._protocol_write(addr, value, size_bytes)
+
+        if reg:
+            self.log.info(f"Write {reg.hierarchical_name} @ 0x{addr:08x} = 0x{value:08x}")
+            self._predictor.predict_write(addr, value, size_bytes)
+        else:
+            self.log.debug(f"Write unmapped 0x{addr:08x} = 0x{value:08x}")
+
+    async def read(self, name_or_addr: Union[str, int]) -> int:
+        """Front-door read: drive the bus, check the prediction, and return
+        the raw value. Optional backdoor cross-check if the DUT handle is
+        set and the register has an HDL path."""
+        if self._master is None:
+            raise RuntimeError("No master attached. Call attach_master() first.")
+
+        reg = self._resolve_register(name_or_addr)
+        addr = reg.address if reg else name_or_addr
+        size_bytes = reg.size_bytes if reg else 4
+
+        actual = await self._protocol_read(addr, size_bytes)
+
+        if reg:
+            self.log.info(f"Read  {reg.hierarchical_name} @ 0x{addr:08x} -> 0x{actual:08x}")
+            result = self._predictor.predict_read(addr, actual, size_bytes)
+            self._checker.check(result)
+
+            if reg.has_backdoor and self.dut is not None:
+                bd_value = self._backdoor_read_raw(reg)
+                if bd_value is not None and bd_value != actual:
+                    self.log.warning(
+                        f"Backdoor mismatch on {reg.name}: "
+                        f"frontdoor=0x{actual:08x}, backdoor=0x{bd_value:08x}"
+                    )
+        else:
+            self.log.debug(f"Read  unmapped 0x{addr:08x} -> 0x{actual:08x}")
+
+        return actual
+
+    async def write_field(self, reg_name: str, field_name: str, value: int):
+        """Read-modify-write a single field."""
+        reg = self._resolve_register(reg_name)
+        if reg is None:
+            raise KeyError(f"Register {reg_name!r} not found")
+        field = reg.get_field(field_name)
+        if field is None:
+            raise KeyError(f"Field {field_name!r} not found in {reg.name}")
+
+        current = await self.read(reg.address)
+        mask = field.mask << field.lsb
+        new_value = (current & ~mask) | ((value & field.mask) << field.lsb)
+        await self.write(reg.address, new_value)
+
+    async def read_field(self, reg_name: str, field_name: str) -> int:
+        """Read a register and return a single field value."""
+        reg = self._resolve_register(reg_name)
+        if reg is None:
+            raise KeyError(f"Register {reg_name!r} not found")
+        field = reg.get_field(field_name)
+        if field is None:
+            raise KeyError(f"Field {field_name!r} not found in {reg.name}")
+
+        data = await self.read(reg.address)
+        return (data >> field.lsb) & field.mask
+
+    # ------------------------------------------------------------------
+    # Bulk / pattern-driven access
+    # ------------------------------------------------------------------
+
+    async def write_many(
+        self,
+        values: Dict[Union[str, int], int],
+        *,
+        sort: bool = True,
+        best_effort: bool = False,
+    ) -> Dict[Union[str, int], Optional[Exception]]:
+        """Write many registers in one call.
+
+        Args:
+            values: Mapping of register name or address to value.
+            sort: When True (default), writes are issued in ascending-address
+                order regardless of ``values`` insertion order. Pass False
+                to preserve insertion order.
+            best_effort: When True, capture exceptions in the return dict
+                instead of raising, and keep going. When False (default),
+                the first failure raises and later writes do not happen.
+
+        Returns:
+            Dict keyed by the original ``values`` keys with each value set
+            to ``None`` on success or the caught exception on failure.
+        """
+        resolved: List[Tuple[Union[str, int], Optional[Register], int]] = []
+        for key, value in values.items():
+            reg = self._resolve_register(key) if isinstance(key, (str, int)) else None
+            if reg is None and not isinstance(key, int) and not best_effort:
+                raise KeyError(f"Register {key!r} not found")
+            resolved.append((key, reg, value))
+
+        if sort:
+            resolved.sort(key=lambda t: (
+                t[1].address if t[1] else (t[0] if isinstance(t[0], int) else 2**63),
+            ))
+
+        results: Dict[Union[str, int], Optional[Exception]] = {}
+        for key, reg, value in resolved:
+            try:
+                addr = reg.address if reg is not None else key
+                await self.write(addr, value)
+                results[key] = None
+            except Exception as exc:
+                results[key] = exc
+                if not best_effort:
+                    raise
+        return results
+
+    async def write_pattern(
+        self,
+        pattern: str,
+        value: int,
+        *,
+        regex: Optional[str] = None,
+    ) -> List[str]:
+        """Write ``value`` to every register whose hierarchical name matches.
+
+        ``pattern`` is an fnmatch glob; pass ``regex=`` for regex matching
+        instead (mutually exclusive). Matched registers are written in
+        ascending-address order. Raises ``KeyError`` if no register matches.
+        """
+        regs = self.model.find_registers(
+            name=None if regex is not None else pattern, regex=regex,
+        )
+        if not regs:
+            raise KeyError(f"No registers match pattern {pattern!r}")
+        for reg in regs:
+            await self.write(reg.address, value)
+        return [r.hierarchical_name for r in regs]
+
+    async def write_field_pattern(
+        self,
+        reg_pattern: str,
+        field_name: str,
+        value: int,
+        *,
+        regex: Optional[str] = None,
+    ) -> List[str]:
+        """Write ``value`` to a named field across every register that has it.
+
+        Matched registers lacking the field are silently skipped. Raises
+        ``KeyError`` if no register matches the pattern *and* has the field.
+        """
+        regs = self.model.find_registers(
+            name=None if regex is not None else reg_pattern, regex=regex,
+        )
+        matched = [r for r in regs if r.get_field(field_name) is not None]
+        if not matched:
+            raise KeyError(
+                f"No registers with field {field_name!r} match {reg_pattern!r}"
+            )
+        for reg in matched:
+            await self.write_field(reg.hierarchical_name, field_name, value)
+        return [r.hierarchical_name for r in matched]
+
+    async def read_pattern(
+        self,
+        pattern: str,
+        *,
+        regex: Optional[str] = None,
+    ) -> Dict[str, int]:
+        """Read every register whose hierarchical name matches.
+
+        Returns a dict keyed by hierarchical name, in ascending-address
+        order. Prediction checking applies to each read.
+        """
+        regs = self.model.find_registers(
+            name=None if regex is not None else pattern, regex=regex,
+        )
+        if not regs:
+            raise KeyError(f"No registers match pattern {pattern!r}")
+        return {r.hierarchical_name: await self.read(r.address) for r in regs}
+
+    # ------------------------------------------------------------------
+    # Backdoor access
+    # ------------------------------------------------------------------
+
+    async def backdoor_read(self, name_or_addr: Union[str, int]) -> int:
+        """Read a register value via HDL signal path."""
+        if self.dut is None:
+            raise RuntimeError("No dut_handle provided for backdoor access.")
+        reg = self._resolve_register(name_or_addr)
+        if reg is None:
+            raise KeyError(f"Register {name_or_addr!r} not found")
+        value = self._backdoor_read_raw(reg)
+        if value is None:
+            raise RuntimeError(f"Backdoor read failed for {reg.name}")
+        return value
+
+    async def backdoor_write(self, name_or_addr: Union[str, int], value: int):
+        """Force a register value via HDL signal path."""
+        if self.dut is None:
+            raise RuntimeError("No dut_handle provided for backdoor access.")
+        reg = self._resolve_register(name_or_addr)
+        if reg is None:
+            raise KeyError(f"Register {name_or_addr!r} not found")
+
+        if reg.hdl_path:
+            handle = self.dut._id(reg.hdl_path, extended=False)
+            if handle is not None:
+                handle.value = value
+                self.log.debug(f"backdoor_write: {reg.name} = 0x{value:08x}")
+                return
+
+        for f in reg.fields:
+            if f.hdl_path:
+                field_val = (value >> f.lsb) & f.mask
+                handle = self.dut._id(f.hdl_path, extended=False)
+                if handle is not None:
+                    handle.value = field_val
+
+    def _backdoor_read_raw(self, reg: Register) -> Optional[int]:
+        """Read register value from HDL hierarchy. Returns None on failure."""
+        if reg.hdl_path:
+            try:
+                handle = self.dut._id(reg.hdl_path, extended=False)
+                if handle is None:
+                    self.log.error(f"Backdoor path not found: {reg.hdl_path}")
+                    return None
+                raw = handle.value
+                return self._resolve_hdl_value(raw, reg.size_bits)
+            except Exception as e:
+                self.log.error(f"Backdoor read failed for {reg.name}: {e}")
+                return None
+
+        value = 0
+        any_success = False
+        for f in reg.fields:
+            if not f.hdl_path:
+                continue
+            try:
+                handle = self.dut._id(f.hdl_path, extended=False)
+                if handle is None:
+                    continue
+                raw = handle.value
+                field_val = self._resolve_hdl_value(raw, f.width)
+                value |= (field_val & f.mask) << f.lsb
+                any_success = True
+            except Exception as e:
+                self.log.error(f"Backdoor read failed for field {f.name}: {e}")
+
+        return value if any_success else None
+
+    @staticmethod
+    def _resolve_hdl_value(raw_value, n_bits: int) -> int:
+        """Resolve a cocotb BinaryValue to an integer, treating X/Z as 0."""
+        result = 0
+        if hasattr(raw_value, 'n_bits'):
+            for i in range(raw_value.n_bits - 1, -1, -1):
+                bit = raw_value.n_bits - 1 - i
+                if raw_value[i].is_resolvable:
+                    result |= int(raw_value[i]) << bit
+        else:
+            result = int(raw_value)
+        return result
+
+    # ------------------------------------------------------------------
+    # Monitor mode (passive)
+    # ------------------------------------------------------------------
+
+    def attach_monitor(self, bus, clock, reset=None, protocol: str = "apb"):
+        """Create and start a passive bus monitor."""
+        protocol = protocol.lower()
+        if protocol == "apb":
+            self._monitor = ApbRalMonitor(
+                bus, clock, self._predictor, self._checker, name=self.name
+            )
+        elif protocol == "axil":
+            self._monitor = AxiLiteRalMonitor(
+                bus, clock, reset, self._predictor, self._checker, name=self.name
+            )
+        elif protocol == "axi":
+            self._monitor = AxiRalMonitor(
+                bus, clock, reset, self._predictor, self._checker, name=self.name
+            )
+        else:
+            raise ValueError(f"Unknown protocol: {protocol!r}")
+
+        self.log.info(f"Attached {protocol.upper()} monitor")
+
+    # ------------------------------------------------------------------
+    # Mirror / check state access
+    # ------------------------------------------------------------------
 
     def set_predicted(self, name_or_addr: Union[str, int], value: int):
-        """Set the mirrored value for every field in a register."""
+        """Raw overwrite of the mirror for every field in a register.
+
+        Ignores access policy; use when hardware forced a value you want the
+        mirror to reflect. See :meth:`notify_external_write` for a policy-
+        aware alternative.
+        """
         reg = self.get_register(name_or_addr)
         for f in reg.fields:
-            self.runtime_state.set_field_mirrored(reg.address, f.name, (value >> f.lsb) & f.mask)
+            self.runtime_state.set_field_mirrored(
+                reg.address, f.name, (value >> f.lsb) & f.mask,
+            )
 
     def set_field_predicted(self, reg_name: str, field_name: str, value: int):
-        """Set the mirrored value for a single field."""
+        """Raw overwrite of the mirror for a single field."""
         reg = self.get_register(reg_name)
+        if reg.get_field(field_name) is None:
+            raise KeyError(f"Field {field_name!r} not found in {reg.name}")
         self.runtime_state.set_field_mirrored(reg.address, field_name, value)
+
+    def disable_check(self, name_or_addr: Union[str, int], field_name: str = ""):
+        """Disable prediction checking for a register or a specific field."""
+        self.runtime_state.disable_check(name_or_addr, field_name)
+        if field_name:
+            self.log.debug(f"Disabled check: {name_or_addr}.{field_name}")
+        else:
+            self.log.debug(f"Disabled check: {name_or_addr} (all fields)")
+
+    def enable_check(self, name_or_addr: Union[str, int], field_name: str = ""):
+        """Re-enable prediction checking for a register or a specific field."""
+        self.runtime_state.enable_check(name_or_addr, field_name)
+        if field_name:
+            self.log.debug(f"Enabled check: {name_or_addr}.{field_name}")
+        else:
+            self.log.debug(f"Enabled check: {name_or_addr} (all fields)")
+
+    def disable_check_all(self):
+        """Disable prediction checking on every register in the model.
+
+        Useful when using the RAL purely for access abstraction and search
+        without wanting any mirror-vs-actual comparisons.
+        """
+        for reg in self.model.all_registers():
+            self.runtime_state.disable_check(reg.address)
+        self.log.debug("Disabled check on every register in the model")
+
+    def enable_check_all(self):
+        """Re-enable prediction checking on every register in the model."""
+        for reg in self.model.all_registers():
+            self.runtime_state.enable_check(reg.address)
+        self.log.debug("Enabled check on every register in the model")
+
+    def set_hdl_path(self, name_or_addr: Union[str, int], hdl_path: str):
+        """Set the backdoor HDL path for a register."""
+        reg = self.get_register(name_or_addr)
+        reg.hdl_path = hdl_path
+
+    def set_field_hdl_path(self, reg_name: str, field_name: str, hdl_path: str):
+        """Set the backdoor HDL path for a field."""
+        reg = self.get_register(reg_name)
+        field = reg.get_field(field_name)
+        if field is None:
+            raise KeyError(f"Field {field_name!r} not found in {reg.name}")
+        field.hdl_path = hdl_path
+
+    def get_register(self, name_or_addr: Union[str, int]) -> Register:
+        """Look up a register by name or address. Raises KeyError if not found."""
+        reg = self._resolve_register(name_or_addr)
+        if reg is None:
+            raise KeyError(f"Register {name_or_addr!r} not found")
+        return reg
+
+    def reset(self):
+        """Restore the mirror on every register to its reset value.
+
+        Affects mutable runtime state only; the spec model is unchanged.
+        """
+        self.runtime_state.reset()
+        self.log.info("Mirror reset to defaults")
+
+    def notify_external_write(self, address: int, data: int, size_bytes: int = 4):
+        """Update the mirror as if a SW-style write happened from another agent.
+
+        Runs the value through the normal write access policy (W1C clears,
+        WO stores, RO no-op, etc.). Use this when firmware or a second
+        master writes to a register in this RAL's model without going
+        through this RAL.
+        """
+        self._predictor.predict_write(address, data, size_bytes)
+
+    # ------------------------------------------------------------------
+    # Reporting
+    # ------------------------------------------------------------------
+
+    def report(self) -> str:
+        return self._checker.report()
+
+    def has_errors(self) -> bool:
+        return self._checker.has_errors()
+
+    def raise_on_errors(self):
+        self._checker.raise_on_errors()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _resolve_register(self, name_or_addr: Union[str, int]) -> Optional[Register]:
+        return self.model.get_register(name_or_addr)
+
+    def _mirror_of(self, reg: Register) -> int:
+        """Current mirror value (packed 32-bit) for ``reg`` from runtime state.
+
+        Returns 0 if the register has no runtime state (should not happen in
+        practice, but kept permissive for consumer code).
+        """
+        reg_state = self.runtime_state.get_register_state(reg.address)
+        return reg_state.predicted_value if reg_state else 0
+
+    async def _protocol_write(self, addr: int, value: int, size_bytes: int):
+        if self._protocol == "apb":
+            await self._master.write(addr, value)
+        elif self._protocol in ("axil", "axi"):
+            data_bytes = value.to_bytes(size_bytes, byteorder="little")
+            await self._master.write(addr, data_bytes)
+        else:
+            raise RuntimeError(f"Unknown protocol: {self._protocol}")
+
+    async def _protocol_read(self, addr: int, size_bytes: int) -> int:
+        if self._protocol == "apb":
+            resp = await self._master.read(addr)
+            return int.from_bytes(bytes(resp), byteorder="little")
+        elif self._protocol in ("axil", "axi"):
+            resp = await self._master.read(addr, size_bytes)
+            return int.from_bytes(bytes(resp.data), byteorder="little")
+        else:
+            raise RuntimeError(f"Unknown protocol: {self._protocol}")

@@ -11,10 +11,8 @@ cocotbext/ral/
   register_model.py         # SwAccess, RegisterField, Register, RegisterBlock, RegisterModel
   state.py                  # FieldState, RegisterState, RuntimeState
   access_policy.py          # AccessPolicy, PolicyRegistry
-  runtime_predictor.py      # RuntimePredictor (recommended predictor)
-  predictor.py              # Predictor (legacy, warns on instantiation)
+  runtime_predictor.py      # RuntimePredictor, PredictionResult, FieldResult
   checker.py                # Checker scoreboard
-  ral.py                    # RAL (legacy, requires cocotb, warns on direct instantiation)
   runtime_ral.py            # RuntimeRAL (requires cocotb)
   safe_runtime_ral.py       # SafeRuntimeRAL (requires cocotb)
   integrated_runtime_ral.py # IntegratedRuntimeRAL (requires cocotb)
@@ -29,7 +27,7 @@ cocotbext/ral/
   adapters/
     json_loader.py           # load_json()
     rdl_loader.py            # load_rdl() (requires systemrdl-compiler)
-tests/                       # 164 pytest unit tests
+tests/                       # 146 pytest unit tests
 examples/                    # Usage examples
 docs/                        # Architecture and API documentation
 ```
@@ -39,8 +37,7 @@ docs/                        # Architecture and API documentation
 ```
 IntegratedRuntimeRAL   (backdoor + txn log + debug)
   -> SafeRuntimeRAL    (RMW safety)
-    -> RuntimeRAL      (RuntimeState-backed prediction)
-      -> RAL           (legacy cocotb integration)
+    -> RuntimeRAL      (RuntimeState-backed prediction + front-door bus + monitor)
 ```
 
 ## Running tests
@@ -49,15 +46,15 @@ IntegratedRuntimeRAL   (backdoor + txn log + debug)
 python -m pytest tests/ -v
 ```
 
-All 164 tests pass. Tests are pure Python (no cocotb simulation needed).
+All 146 tests pass. Tests are pure Python (no cocotb simulation needed).
 
 ## Key design decisions
 
-- **Spec/state separation**: `RegisterModel` = structure, `RuntimeState` = mutable state. One model can back many instances.
+- **Spec/state separation**: `RegisterModel` is immutable structural data; `RuntimeState` holds every bit of mutable per-instance state (mirrored value, desired value, check_enabled, dirty). One model can back many RAL instances.
 - **Policy-based access**: `AccessPolicy` encapsulates write/read behavior per `SwAccess` type.
 - **Volatile inference**: RO, RCLR, RSET default to `volatile=True`. Override with explicit `volatile=` parameter.
-- **Deprecation on instantiation**: Legacy `Predictor` and `RAL` warn on construction, not import. `RAL` skips warning for subclasses.
-- **Transaction logging**: Optional, zero-overhead when disabled. Enabled via `txn_log=` on `IntegratedRuntimeRAL`.
+- **Transaction logging**: Optional, zero-overhead when disabled. Enabled via `txn_log=` on `IntegratedRuntimeRAL`. Field RMW writes render as one WRITE_FIELD entry with the internal bus read + write-back nested under `Bus traffic:`.
+- **Mirror update modes** (see `docs/api/RUNTIME_API.md`): `write()` drives the bus + applies policy. `notify_external_write()` applies policy without bus traffic. `set_predicted()` / `set_field_predicted()` is a raw mirror overwrite (use when hardware forced a value).
 
 ## Common development tasks
 

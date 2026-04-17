@@ -3,7 +3,7 @@
 import logging
 from typing import List
 
-from .predictor import PredictionResult
+from .runtime_predictor import PredictionResult
 
 
 class Checker:

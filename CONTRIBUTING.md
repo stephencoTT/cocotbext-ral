@@ -32,4 +32,4 @@ pytest
 - Keep changes focused
 - Add or update tests for behavioral changes
 - Include examples when adding a new public feature
-- Run `pytest` -- all 164 tests must pass
+- Run `pytest` -- all 146 tests must pass

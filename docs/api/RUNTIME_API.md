@@ -292,10 +292,6 @@ state.enable_check(0x100)
 
 # Reset all state
 state.reset()
-
-# Sync with legacy RegisterField objects
-state.sync_from_legacy_model()
-state.sync_to_legacy_model()
 ```
 
 ## AccessPolicy

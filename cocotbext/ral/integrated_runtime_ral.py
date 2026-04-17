@@ -125,12 +125,12 @@ class IntegratedRuntimeRAL(SafeRuntimeRAL):
             return await super().write(name_or_addr, value)
 
         reg = self._resolve_register(name_or_addr)
-        mirror_before = reg.predicted_value if reg else 0
+        mirror_before = self._mirror_of(reg) if reg else 0
 
         # Drive the actual write via the parent class
         await super().write(name_or_addr, value)
 
-        mirror_after = reg.predicted_value if reg else 0
+        mirror_after = self._mirror_of(reg) if reg else 0
 
         # Build field details
         field_details = []
@@ -168,7 +168,7 @@ class IntegratedRuntimeRAL(SafeRuntimeRAL):
         reg = self._resolve_register(name_or_addr)
 
         # Capture mirror BEFORE the read (predict_read may apply side effects)
-        mirror_value = reg.predicted_value if reg else 0
+        mirror_value = self._mirror_of(reg) if reg else 0
         expected_full = mirror_value
 
         # Check if checking is enabled for any field
@@ -261,7 +261,7 @@ class IntegratedRuntimeRAL(SafeRuntimeRAL):
                 f"Unsafe RMW on {reg.hierarchical_name}.{field_name}: {reasons}"
             )
 
-        mirror_before = reg.predicted_value
+        mirror_before = self._mirror_of(reg)
 
         # RMW sequence: read current value, modify target field, write back.
         # The internal read and write-back are buffered by the logger and
@@ -277,7 +277,7 @@ class IntegratedRuntimeRAL(SafeRuntimeRAL):
             self._txn_logger.end_rmw()  # discard orphaned children on failure
             raise
 
-        mirror_after = reg.predicted_value
+        mirror_after = self._mirror_of(reg)
 
         bd_path = ""
         if self.backdoor_resolver:
