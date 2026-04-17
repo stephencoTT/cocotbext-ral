@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cocotbext-ral"
-version = "0.3.0"
+version = "0.3.1"
 description = "Python-native Register Abstraction Layer (RAL) for cocotb with a data-driven runtime architecture"
 readme = "README.md"
 license = "MIT"

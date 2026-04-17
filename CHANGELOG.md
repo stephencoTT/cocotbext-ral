@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.3.1
 
 ### Breaking changes: legacy path removed
 - Removed the legacy `RAL` class; `RuntimeRAL` is now the standalone base
