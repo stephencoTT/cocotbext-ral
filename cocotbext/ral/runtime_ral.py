@@ -16,9 +16,6 @@ from .register_model import RegisterModel, Register
 from .runtime_predictor import RuntimePredictor
 from .state import RuntimeState
 from .checker import Checker
-from .monitor import ApbRalMonitor, AxiLiteRalMonitor, AxiRalMonitor
-
-
 class RuntimeRAL:
     """Register Abstraction Layer for cocotb-based verification.
 
@@ -446,6 +443,8 @@ class RuntimeRAL:
 
     def attach_monitor(self, bus, clock, reset=None, protocol: str = "apb"):
         """Create and start a passive bus monitor."""
+        # Lazy import so runtime_ral doesn't require cocotb at import time
+        from .monitor import ApbRalMonitor, AxiLiteRalMonitor, AxiRalMonitor
         protocol = protocol.lower()
         if protocol == "apb":
             self._monitor = ApbRalMonitor(
