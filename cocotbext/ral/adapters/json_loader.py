@@ -1,7 +1,11 @@
 """Load a RegisterModel from RDL-generated JSON.
 
-Parses the hierarchical JSON format produced by create_reg_json.py
-(addrmap -> regfile -> reg -> field) into the RAL RegisterModel.
+Parses the hierarchical JSON format produced by PeakRDL-based JSON
+exporters (``{"type": "addrmap"}`` at the root, with nested
+``regfile``, ``reg``, ``field``, and ``mem`` children) into the RAL
+``RegisterModel``. Any tool that walks a ``systemrdl`` model and emits
+this shape will work -- one example is ``create_reg_json.py`` from
+Tenstorrent's ``reg_flow`` package.
 """
 
 import json
