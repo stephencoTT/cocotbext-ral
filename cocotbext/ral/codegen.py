@@ -10,16 +10,16 @@ Usage::
     from cocotbext.ral.codegen import generate_namespace
 
     model = load_json("registers.json")
-    generate_namespace(model, "output/smu_ns.py")
+    generate_namespace(model, "output/mychip_ns.py")
 
 The generated module provides a nested class hierarchy that mirrors
 the register model's hierarchical names. Each leaf attribute is a
 string constant equal to the full model path::
 
-    from output.smu_ns import quasar_smu
+    from output.mychip_ns import mychip
 
-    quasar_smu.smc_cpu.reset_unit.SS_CONFIG
-    # == "quasar_smu.smc_cpu.reset_unit.SS_CONFIG"
+    mychip.cpu.reset_unit.SS_CONFIG
+    # == "mychip.cpu.reset_unit.SS_CONFIG"
 """
 
 from __future__ import annotations

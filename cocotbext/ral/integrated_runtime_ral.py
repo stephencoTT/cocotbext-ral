@@ -53,7 +53,7 @@ class IntegratedRuntimeRAL(SafeRuntimeRAL):
         Args:
             master: A cocotbext master instance.
             protocol: One of "apb", "axil", "axi".
-            interface: HDL path of the bus interface (e.g. "quasar_soc.sim_axi").
+            interface: HDL path of the bus interface (e.g. "dut.sim_axi").
                 If not provided, the logger will attempt to extract it from the
                 master object (best-effort).
         """
