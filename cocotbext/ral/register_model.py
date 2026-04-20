@@ -191,6 +191,82 @@ class RegisterBlock:
         )
 
 
+class Memory:
+    """A named memory region (SRAM, scratchpad, etc.).
+
+    Unlike registers, memories have no fields, no access policy, and no
+    prediction checking. They provide named access to a base address and
+    size, following the UVM ``uvm_mem`` pattern.
+
+    The ``write`` and ``read`` methods are async and require a RAL
+    instance to be attached (set via ``_attach_ral``).
+    """
+
+    def __init__(
+        self,
+        name: str,
+        base_address: int,
+        size_bytes: int = 0,
+        description: str = "",
+    ):
+        self.name = name
+        self.base_address = base_address
+        self.size_bytes = size_bytes
+        self.description = description
+        self.hierarchical_name = name
+        self._ral = None
+
+    @property
+    def base(self) -> int:
+        """Base address of the memory region."""
+        return self.base_address
+
+    def _attach_ral(self, ral) -> None:
+        """Attach a RAL instance for bus access. Called by RuntimeRAL."""
+        self._ral = ral
+
+    async def write(self, offset: int, data: int) -> None:
+        """Write to memory at base + offset.
+
+        Args:
+            offset: Byte offset from the memory base address.
+            data: Data value to write.
+        """
+        if self._ral is None:
+            raise RuntimeError("Memory not attached to a RAL instance")
+        addr = self.base_address + offset
+        await self._ral._protocol_write(addr, data, 4)
+        self._ral.log.debug(
+            f"MEM write {self.hierarchical_name}+0x{offset:x} "
+            f"(0x{addr:08x}) = 0x{data:x}"
+        )
+
+    async def read(self, offset: int) -> int:
+        """Read from memory at base + offset.
+
+        Args:
+            offset: Byte offset from the memory base address.
+
+        Returns:
+            The read data value.
+        """
+        if self._ral is None:
+            raise RuntimeError("Memory not attached to a RAL instance")
+        addr = self.base_address + offset
+        val = await self._ral._protocol_read(addr, 4)
+        self._ral.log.debug(
+            f"MEM read  {self.hierarchical_name}+0x{offset:x} "
+            f"(0x{addr:08x}) -> 0x{val:x}"
+        )
+        return val
+
+    def __repr__(self):
+        return (
+            f"Memory({self.name!r}, base=0x{self.base_address:08x}, "
+            f"size=0x{self.size_bytes:x})"
+        )
+
+
 class RegisterModel:
     """Top-level register model with address and name indexing."""
 
@@ -199,6 +275,7 @@ class RegisterModel:
         self._by_address: Dict[int, Register] = {}
         self._by_name: Dict[str, Register] = {}
         self.blocks: List[RegisterBlock] = []
+        self._memories: Dict[str, Memory] = {}
 
     @property
     def register_count(self) -> int:
@@ -212,6 +289,45 @@ class RegisterModel:
         leaf_name = name_key.rsplit(".", 1)[-1] if "." in name_key else name_key
         if leaf_name not in self._by_name:
             self._by_name[leaf_name] = reg
+
+    # ------------------------------------------------------------------
+    # Memory regions
+    # ------------------------------------------------------------------
+
+    def add_memory(self, mem: Memory, hierarchical_name: str = ""):
+        """Add a memory region to the model."""
+        name_key = hierarchical_name or mem.name
+        mem.hierarchical_name = name_key
+        self._memories[name_key] = mem
+        leaf_name = name_key.rsplit(".", 1)[-1] if "." in name_key else name_key
+        if leaf_name not in self._memories:
+            self._memories[leaf_name] = mem
+
+    def get_memory(self, name: str) -> Optional[Memory]:
+        """Look up a memory region by name (hierarchical or leaf)."""
+        if name in self._memories:
+            return self._memories[name]
+        matches = [
+            m for key, m in self._memories.items()
+            if key.endswith(f".{name}") or key == name
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        return None
+
+    def all_memories(self) -> List[Memory]:
+        """Return all memory regions (deduplicated)."""
+        seen = set()
+        result = []
+        for mem in self._memories.values():
+            if id(mem) not in seen:
+                seen.add(id(mem))
+                result.append(mem)
+        return result
+
+    # ------------------------------------------------------------------
+    # Register lookup
+    # ------------------------------------------------------------------
 
     def get_register(self, name_or_addr: Union[str, int]) -> Optional[Register]:
         if isinstance(name_or_addr, int):

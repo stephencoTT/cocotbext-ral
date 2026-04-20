@@ -26,6 +26,11 @@ class Checker:
         Returns:
             True if the result passed, False otherwise.
         """
+        # If the result passed vacuously (no fields were actually checked),
+        # skip the PASS log to avoid noise during bringup.
+        if result.passed and not result.field_results:
+            return True
+
         self._total_checks += 1
         if result.passed:
             self._passed_checks += 1

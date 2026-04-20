@@ -8,7 +8,10 @@ from cocotbext.ral import PredictionResult, FieldResult, Checker
 class TestChecker(unittest.TestCase):
 
     def _pass_result(self, name="REG", addr=0x100):
-        return PredictionResult(register_name=name, address=addr, passed=True)
+        return PredictionResult(
+            register_name=name, address=addr, passed=True,
+            field_results=[FieldResult("data", expected=0x1, actual=0x1, matched=True)],
+        )
 
     def _fail_result(self, name="REG", addr=0x100, msgs=None):
         return PredictionResult(

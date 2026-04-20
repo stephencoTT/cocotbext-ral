@@ -89,6 +89,8 @@ class RuntimeRAL:
             raise RuntimeError("No master attached. Call attach_master() first.")
 
         reg = self._resolve_register(name_or_addr)
+        if reg is None and isinstance(name_or_addr, str):
+            raise KeyError(f"Register {name_or_addr!r} not found in model")
         addr = reg.address if reg else name_or_addr
         size_bytes = reg.size_bytes if reg else 4
 
@@ -108,6 +110,8 @@ class RuntimeRAL:
             raise RuntimeError("No master attached. Call attach_master() first.")
 
         reg = self._resolve_register(name_or_addr)
+        if reg is None and isinstance(name_or_addr, str):
+            raise KeyError(f"Register {name_or_addr!r} not found in model")
         addr = reg.address if reg else name_or_addr
         size_bytes = reg.size_bytes if reg else 4
 
@@ -155,6 +159,88 @@ class RuntimeRAL:
 
         data = await self.read(reg.address)
         return (data >> field.lsb) & field.mask
+
+    # ------------------------------------------------------------------
+    # UVM-style set / update
+    # ------------------------------------------------------------------
+
+    def set_field(self, name_or_addr: Union[str, int], field_name: str, value: int) -> None:
+        """Set a field's desired value in the mirror without driving the bus.
+
+        Call :meth:`update` afterwards to push all pending desired values
+        to hardware in a single bus write. Follows the UVM RAL
+        ``field.set()`` pattern.
+
+        Args:
+            name_or_addr: Register name or address.
+            field_name: Field name within the register.
+            value: Desired field value.
+        """
+        reg = self.get_register(name_or_addr)
+        field = reg.get_field(field_name)
+        if field is None:
+            raise KeyError(f"Field {field_name!r} not found in {reg.name}")
+        reg_state = self.runtime_state.get_register_state(reg.address)
+        if reg_state is None:
+            raise KeyError(f"No runtime state for {reg.name}")
+        field_state = reg_state.fields[field.name]
+        field_state.desired = value & field.mask
+        field_state.dirty = True
+
+    async def update(self, name_or_addr: Union[str, int]) -> None:
+        """Write the desired value to hardware in a single bus transaction.
+
+        Packs all fields' desired values into a register word and drives
+        one write. Follows the UVM RAL ``reg.update()`` pattern. Only
+        fields marked dirty (via :meth:`set_field`) contribute; clean
+        fields use their current mirrored value.
+
+        Args:
+            name_or_addr: Register name or address.
+        """
+        reg = self.get_register(name_or_addr)
+        reg_state = self.runtime_state.get_register_state(reg.address)
+        if reg_state is None:
+            raise KeyError(f"No runtime state for {reg.name}")
+
+        # Build the write value: dirty fields use desired, others use mirrored
+        value = 0
+        for field in reg.fields:
+            fs = reg_state.fields[field.name]
+            if fs.dirty:
+                value |= (fs.desired & field.mask) << field.lsb
+            else:
+                value |= (fs.mirrored & field.mask) << field.lsb
+
+        await self.write(reg.address, value)
+
+        # Clear dirty flags
+        for field in reg.fields:
+            fs = reg_state.fields[field.name]
+            fs.dirty = False
+
+    async def write_fields(
+        self,
+        name_or_addr: Union[str, int],
+        fields: dict,
+    ) -> None:
+        """Set multiple fields and write to hardware in one transaction.
+
+        Compact form combining :meth:`set_field` + :meth:`update`::
+
+            await ral.write_fields("REG", {
+                "field_a": 1,
+                "field_b": 0xFF,
+                "field_c": 3,
+            })
+
+        Args:
+            name_or_addr: Register name or address.
+            fields: Dict mapping field name to desired value.
+        """
+        for field_name, value in fields.items():
+            self.set_field(name_or_addr, field_name, value)
+        await self.update(name_or_addr)
 
     # ------------------------------------------------------------------
     # Bulk / pattern-driven access
@@ -454,6 +540,80 @@ class RuntimeRAL:
             raise KeyError(f"Register {name_or_addr!r} not found")
         return reg
 
+    def get_memory(self, name: str):
+        """Look up a memory region by name, attached to this RAL for bus access.
+
+        Returns a ``Memory`` object with async ``write(offset, data)`` and
+        ``read(offset)`` methods that drive the bus through this RAL's
+        master, following the UVM ``uvm_mem`` pattern.
+
+        Raises KeyError if not found.
+        """
+        from .register_model import Memory
+        mem = self.model.get_memory(name)
+        if mem is None:
+            raise KeyError(f"Memory {name!r} not found in model")
+        mem._attach_ral(self)
+        return mem
+
+    # ------------------------------------------------------------------
+    # Mirror query (no bus traffic, pure Python)
+    # ------------------------------------------------------------------
+
+    def mirror(self, name_or_addr: Union[str, int]) -> int:
+        """Return the full mirrored value of a register.
+
+        Reads from RuntimeState, no bus transaction. Returns whatever the
+        mirror currently holds (from prior writes, reads, or set_predicted).
+
+        Args:
+            name_or_addr: Register name or address.
+
+        Returns:
+            The mirrored register value.
+        """
+        reg = self.get_register(name_or_addr)
+        return self._mirror_of(reg)
+
+    def mirror_field(self, name_or_addr: Union[str, int], field_name: str) -> int:
+        """Return the mirrored value of a single field.
+
+        No bus transaction. Extracts the field from the register mirror
+        using the model's field position and mask.
+
+        Args:
+            name_or_addr: Register name or address.
+            field_name: Field name within the register.
+
+        Returns:
+            The field value extracted from the mirror.
+        """
+        reg = self.get_register(name_or_addr)
+        field = reg.get_field(field_name)
+        if field is None:
+            raise KeyError(f"Field {field_name!r} not found in {reg.name}")
+        mirror_val = self._mirror_of(reg)
+        return (mirror_val >> field.lsb) & field.mask
+
+    def mirror_fields(self, name_or_addr: Union[str, int]) -> dict:
+        """Return all field values from the mirror as a dict.
+
+        No bus transaction. Returns ``{field_name: value}`` for every
+        field in the register.
+
+        Args:
+            name_or_addr: Register name or address.
+
+        Returns:
+            Dict mapping field name to mirrored value.
+        """
+        reg = self.get_register(name_or_addr)
+        mirror_val = self._mirror_of(reg)
+        return {
+            f.name: (mirror_val >> f.lsb) & f.mask
+            for f in reg.fields
+        }
+
     def reset(self):
         """Restore the mirror on every register to its reset value.
 
@@ -519,3 +679,166 @@ class RuntimeRAL:
             return int.from_bytes(bytes(resp.data), byteorder="little")
         else:
             raise RuntimeError(f"Unknown protocol: {self._protocol}")
+
+    # ------------------------------------------------------------------
+    # Bringup mode
+    # ------------------------------------------------------------------
+
+    def begin_bringup(self):
+        """Enter bringup mode: disable all prediction checking.
+
+        Register writes and reads still go through the RAL (updating the
+        mirror and logging transactions), but read mismatches are not
+        flagged. Call :meth:`end_bringup` after the bringup sequence to
+        re-enable checking.
+        """
+        self.disable_check_all()
+        self.log.info("Bringup mode ENTERED (checking disabled)")
+
+    def end_bringup(self):
+        """Exit bringup mode: re-enable prediction checking on all registers."""
+        self.enable_check_all()
+        self.log.info("Bringup mode EXITED (checking enabled)")
+
+    # ------------------------------------------------------------------
+    # Coverage tracking
+    # ------------------------------------------------------------------
+
+    @property
+    def coverage(self):
+        """Access coverage data collected from the transaction logger.
+
+        Returns a dict with keys: ``written_addrs``, ``read_addrs``,
+        ``accessed_addrs``, ``total_registers``. Returns None if no
+        transaction logger is active.
+        """
+        logger = getattr(self, '_txn_logger', None)
+        if logger is None:
+            return None
+
+        written = set()
+        read = set()
+        for txn in logger._transactions:
+            if "WRITE" in txn.operation:
+                written.add(txn.address)
+            if txn.operation == "READ":
+                read.add(txn.address)
+        accessed = written | read
+        return {
+            "total_registers": self.model.register_count,
+            "accessed": len(accessed),
+            "written": len(written),
+            "read": len(read),
+            "not_accessed": self.model.register_count - len(accessed),
+            "accessed_addrs": accessed,
+            "written_addrs": written,
+            "read_addrs": read,
+        }
+
+    def coverage_report(self) -> str:
+        """Return a formatted register access coverage summary.
+
+        Groups results by the top two levels of the register hierarchy.
+        """
+        cov = self.coverage
+        if cov is None:
+            return "Coverage: no transaction logger active"
+
+        lines = []
+        lines.append(f"Coverage: {cov['accessed']}/{cov['total_registers']} "
+                      f"({cov['accessed']/max(cov['total_registers'],1)*100:.1f}%) "
+                      f"registers accessed "
+                      f"({cov['written']} written, {cov['read']} read)")
+
+        blocks = {}
+        for reg in self.model.all_registers():
+            parts = reg.hierarchical_name.split(".")
+            block = ".".join(parts[:2]) if len(parts) >= 2 else parts[0]
+            if block not in blocks:
+                blocks[block] = {"total": 0, "accessed": 0}
+            blocks[block]["total"] += 1
+            if reg.address in cov["accessed_addrs"]:
+                blocks[block]["accessed"] += 1
+
+        for block in sorted(blocks):
+            b = blocks[block]
+            pct = b["accessed"] / max(b["total"], 1) * 100
+            if b["accessed"] > 0:
+                lines.append(f"  {block:<50s} {b['accessed']:>4d}/{b['total']:<4d} ({pct:.0f}%)")
+
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # Polling
+    # ------------------------------------------------------------------
+
+    async def poll(
+        self,
+        name_or_addr: Union[str, int],
+        *,
+        field: Optional[str] = None,
+        expected: int,
+        mask: Optional[int] = None,
+        timeout_us: int = 100,
+        interval_us: int = 5,
+    ) -> int:
+        """Poll a register until it matches the expected value.
+
+        Checking is disabled during polling to avoid false mismatches on
+        hardware-driven registers, then re-enabled and the mirror synced
+        with the final read value.
+
+        Args:
+            name_or_addr: Register to poll.
+            field: If given, extract and compare only this field.
+            expected: Value (or field value) to wait for.
+            mask: Bitmask applied before comparison (ignored if ``field`` set).
+            timeout_us: Maximum polling duration in microseconds.
+            interval_us: Delay between reads in microseconds.
+
+        Returns:
+            The final raw read value.
+
+        Raises:
+            TimeoutError: If not matched within the timeout.
+        """
+        from cocotb.triggers import Timer
+
+        reg = self.get_register(name_or_addr)
+        addr = reg.address
+
+        self.disable_check(addr)
+        elapsed = 0
+        raw = 0
+        try:
+            while elapsed < timeout_us:
+                raw = await self.read(addr)
+
+                if field is not None:
+                    f = reg.get_field(field)
+                    if f is None:
+                        raise KeyError(f"Field {field!r} not in {reg.name}")
+                    val = (raw >> f.lsb) & f.mask
+                elif mask is not None:
+                    val = raw & mask
+                else:
+                    val = raw
+
+                if val == expected:
+                    self.log.info(
+                        f"poll: {reg.hierarchical_name} matched "
+                        f"0x{expected:x} after ~{elapsed}us"
+                    )
+                    self.set_predicted(addr, raw)
+                    return raw
+
+                await Timer(interval_us, units="us")
+                elapsed += interval_us
+
+            raise TimeoutError(
+                f"poll: {reg.hierarchical_name} did not reach "
+                f"0x{expected:x} within {timeout_us}us "
+                f"(last: 0x{raw:x})"
+            )
+        finally:
+            self.enable_check(addr)

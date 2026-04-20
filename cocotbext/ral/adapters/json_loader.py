@@ -9,6 +9,7 @@ from typing import Union
 from pathlib import Path
 
 from ..register_model import (
+    Memory,
     RegisterField,
     Register,
     RegisterBlock,
@@ -83,10 +84,25 @@ def _parse_node(
         model.add_register(reg, hierarchical_name=current_name)
         return
 
+    if node_type == "mem":
+        # Parse memory regions (SRAM, apertures, FIFOs, etc.)
+        memwidth = node.get("memwidth", 32)
+        mementries = node.get("mementries", 0)
+        size_bytes = (memwidth * mementries) // 8
+        mem = Memory(
+            name=inst_name,
+            base_address=current_address,
+            size_bytes=size_bytes,
+            description=node.get("desc", ""),
+        )
+        mem.hierarchical_name = current_name
+        model.add_memory(mem, hierarchical_name=current_name)
+        return
+
     # For addrmap, regfile, or any container: recurse into children
     for child in node.get("children", []):
         child_type = child.get("type", "")
-        if child_type in ("addrmap", "regfile", "reg"):
+        if child_type in ("addrmap", "regfile", "reg", "mem"):
             _parse_node(child, model, current_address, current_name)
 
 
