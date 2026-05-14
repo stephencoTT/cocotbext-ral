@@ -76,6 +76,7 @@ class RegisterField:
     # runtime layer additionally gates checks on RuntimeState.check_enabled
     # and the field's volatile flag.
     _CHECKABLE_ACCESS_TYPES = frozenset({
+        SwAccess.RO,
         SwAccess.RW, SwAccess.W1C, SwAccess.W1S,
         SwAccess.RCLR, SwAccess.RSET,
     })
@@ -347,6 +348,56 @@ class RegisterModel:
 
     def all_registers(self) -> List[Register]:
         return list(self._by_address.values())
+
+    # ------------------------------------------------------------------
+    # Verification-side overrides
+    # ------------------------------------------------------------------
+
+    def force_check_ro(self, reg_name: str, field_name: Optional[str] = None) -> int:
+        """Mark RO fields as non-volatile so the predictor checks them on read.
+
+        Use this for static RO fields (IDs, versions, capability bits) when
+        the designer's RDL didn't annotate them with `dontcompare`.
+
+        Args:
+            reg_name: hierarchical name of the register.
+            field_name: if given, only that field is flipped; otherwise every
+                RO field in the register is flipped.
+
+        Returns:
+            Number of fields whose volatile flag was flipped.
+        """
+        reg = self.get_register(reg_name)
+        if reg is None:
+            raise KeyError(f"Register {reg_name!r} not found")
+        count = 0
+        if field_name is not None:
+            f = reg.get_field(field_name)
+            if f is None:
+                raise KeyError(f"Field {field_name!r} not found in {reg_name}")
+            if f.sw_access == SwAccess.RO and f.volatile:
+                f.volatile = False
+                count += 1
+        else:
+            for f in reg.fields:
+                if f.sw_access == SwAccess.RO and f.volatile:
+                    f.volatile = False
+                    count += 1
+        return count
+
+    def force_check_all_ro(self) -> int:
+        """Mark every RO field in the model as non-volatile.
+
+        Sledgehammer — only safe when you know none of the RO fields in this
+        model are hardware-driven. Returns the number of fields flipped.
+        """
+        count = 0
+        for reg in self.all_registers():
+            for f in reg.fields:
+                if f.sw_access == SwAccess.RO and f.volatile:
+                    f.volatile = False
+                    count += 1
+        return count
 
     # ------------------------------------------------------------------
     # Search / grouping helpers

@@ -72,6 +72,41 @@ class TestRuntimePredictorRO(unittest.TestCase):
         result = pred.predict_read(0x100, 0x99)
         self.assertTrue(result.passed)
 
+    def test_ro_non_volatile_checked_at_reset(self):
+        """RO + volatile=False enables reset-value check on first read."""
+        model = RegisterModel("test")
+        reg = Register("REG", address=0x100, fields=[
+            RegisterField(
+                "id", lsb=0, msb=31, reset_value=0xDEADBEEF,
+                sw_access=SwAccess.RO, volatile=False,
+            ),
+        ])
+        model.add_register(reg, "block.REG")
+        pred = RuntimePredictor(model)
+
+        result = pred.predict_read(0x100, 0xDEADBEEF)
+        self.assertTrue(result.passed)
+        self.assertEqual(len(result.field_results), 1)
+        self.assertTrue(result.field_results[0].matched)
+
+    def test_ro_non_volatile_mismatch_caught(self):
+        """RO + volatile=False catches a wrong reset value on read."""
+        model = RegisterModel("test")
+        reg = Register("REG", address=0x100, fields=[
+            RegisterField(
+                "id", lsb=0, msb=31, reset_value=0xDEADBEEF,
+                sw_access=SwAccess.RO, volatile=False,
+            ),
+        ])
+        model.add_register(reg, "block.REG")
+        pred = RuntimePredictor(model)
+
+        result = pred.predict_read(0x100, 0x12345678)
+        self.assertFalse(result.passed)
+        self.assertEqual(len(result.error_messages), 1)
+        self.assertIn("expected 0xdeadbeef", result.error_messages[0])
+        self.assertIn("got 0x12345678", result.error_messages[0])
+
 
 class TestRuntimePredictorWO(unittest.TestCase):
 

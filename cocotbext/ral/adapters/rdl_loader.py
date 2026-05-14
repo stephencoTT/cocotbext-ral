@@ -15,6 +15,19 @@ from ..register_model import (
 )
 
 
+def _resolve_volatile(field_node):
+    """Honor RDL `dontcompare` as a volatile signal so the predictor
+    skips read-checks. Returns None otherwise, letting RegisterField
+    infer the default from sw_access.
+    """
+    try:
+        if bool(field_node.get_property("dontcompare")):
+            return True
+    except (LookupError, KeyError, AttributeError):
+        pass
+    return None
+
+
 def _map_sw_access(sw_prop, woclr: bool) -> SwAccess:
     """Map systemrdl AccessType + woclr to SwAccess enum."""
     from systemrdl.rdltypes import AccessType  # type: ignore
@@ -75,12 +88,14 @@ def _walk_node(node, model: RegisterModel, name_prefix: str = ""):
                     field_node.get_property("sw"),
                     woclr,
                 )
+                volatile = _resolve_volatile(field_node)
                 field = RegisterField(
                     name=field_node.inst_name,
                     lsb=field_node.low,
                     msb=field_node.high,
                     reset_value=reset_val,
                     sw_access=sw_access,
+                    volatile=volatile,
                 )
                 fields.append(field)
 

@@ -51,6 +51,7 @@ class AccessPolicy:
         if not _volatile_check_allowed(field, state):
             return False
         return self.sw_access in (
+            SwAccess.RO,
             SwAccess.RW,
             SwAccess.W1C,
             SwAccess.W1S,

@@ -173,5 +173,63 @@ class TestRegisterModel(unittest.TestCase):
         self.assertEqual(model.register_count, 2)
 
 
+class TestForceCheckRO(unittest.TestCase):
+
+    def _make_ro_model(self):
+        model = RegisterModel(name="ip")
+        id_reg = Register("ID", address=0x000, fields=[
+            RegisterField("vendor", lsb=0, msb=15, reset_value=0x1234, sw_access=SwAccess.RO),
+            RegisterField("part",   lsb=16, msb=31, reset_value=0x5678, sw_access=SwAccess.RO),
+        ])
+        ver_reg = Register("VERSION", address=0x004, fields=[
+            RegisterField("major", lsb=0, msb=15, reset_value=1, sw_access=SwAccess.RO),
+        ])
+        ctrl_reg = Register("CTRL", address=0x008, fields=[
+            RegisterField("enable", lsb=0, msb=0, sw_access=SwAccess.RW),
+        ])
+        model.add_register(id_reg, hierarchical_name="ip.ID")
+        model.add_register(ver_reg, hierarchical_name="ip.VERSION")
+        model.add_register(ctrl_reg, hierarchical_name="ip.CTRL")
+        return model
+
+    def test_force_check_ro_whole_register(self):
+        model = self._make_ro_model()
+        n = model.force_check_ro("ip.ID")
+        self.assertEqual(n, 2)
+        reg = model.get_register("ip.ID")
+        self.assertFalse(reg.get_field("vendor").volatile)
+        self.assertFalse(reg.get_field("part").volatile)
+
+    def test_force_check_ro_single_field(self):
+        model = self._make_ro_model()
+        n = model.force_check_ro("ip.ID", field_name="vendor")
+        self.assertEqual(n, 1)
+        reg = model.get_register("ip.ID")
+        self.assertFalse(reg.get_field("vendor").volatile)
+        # The other RO field in the same register stays volatile.
+        self.assertTrue(reg.get_field("part").volatile)
+
+    def test_force_check_ro_missing_register_raises(self):
+        model = self._make_ro_model()
+        with self.assertRaises(KeyError):
+            model.force_check_ro("ip.DOES_NOT_EXIST")
+
+    def test_force_check_ro_missing_field_raises(self):
+        model = self._make_ro_model()
+        with self.assertRaises(KeyError):
+            model.force_check_ro("ip.ID", field_name="nope")
+
+    def test_force_check_all_ro(self):
+        model = self._make_ro_model()
+        n = model.force_check_all_ro()
+        # 3 RO fields total: vendor, part, major. CTRL.enable is RW so untouched.
+        self.assertEqual(n, 3)
+        self.assertFalse(model.get_register("ip.ID").get_field("vendor").volatile)
+        self.assertFalse(model.get_register("ip.ID").get_field("part").volatile)
+        self.assertFalse(model.get_register("ip.VERSION").get_field("major").volatile)
+        # RW field is unchanged (still non-volatile by default, but not because we flipped it).
+        self.assertFalse(model.get_register("ip.CTRL").get_field("enable").volatile)
+
+
 if __name__ == "__main__":
     unittest.main()
