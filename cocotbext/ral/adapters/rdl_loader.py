@@ -8,6 +8,7 @@ from typing import List, Union
 from pathlib import Path
 
 from ..register_model import (
+    Memory,
     RegisterField,
     Register,
     RegisterModel,
@@ -16,13 +17,18 @@ from ..register_model import (
 
 
 def _resolve_volatile(field_node):
-    """Honor RDL `dontcompare` as a volatile signal so the predictor
-    skips read-checks. Returns None otherwise, letting RegisterField
-    infer the default from sw_access.
+    """Map RDL `dontcompare` to the field's volatile flag.
+
+    `dontcompare = true`  -> volatile=True  (predictor skips read-checks)
+    `dontcompare = false` -> volatile=False (force-check, even for RO)
+    not annotated         -> None (RegisterField infers from sw_access)
+
+    We use inst.properties to distinguish "explicitly false" from "not set",
+    since `get_property("dontcompare")` returns False in both cases.
     """
     try:
-        if bool(field_node.get_property("dontcompare")):
-            return True
+        if "dontcompare" in field_node.inst.properties:
+            return bool(field_node.get_property("dontcompare"))
     except (LookupError, KeyError, AttributeError):
         pass
     return None
@@ -54,6 +60,7 @@ def _walk_node(node, model: RegisterModel, name_prefix: str = ""):
         RegfileNode,
         RegNode,
         FieldNode,
+        MemNode,
         RootNode,
     )
 
@@ -107,6 +114,20 @@ def _walk_node(node, model: RegisterModel, name_prefix: str = ""):
             description=node.get_property("desc") or "",
         )
         model.add_register(reg, hierarchical_name=current_name)
+        return
+
+    if isinstance(node, MemNode):
+        memwidth = node.get_property("memwidth") or 32
+        mementries = node.get_property("mementries") or 0
+        size_bytes = (memwidth * mementries) // 8
+        mem = Memory(
+            name=inst_name,
+            base_address=node.absolute_address,
+            size_bytes=size_bytes,
+            description=node.get_property("desc") or "",
+        )
+        mem.hierarchical_name = current_name
+        model.add_memory(mem, hierarchical_name=current_name)
         return
 
     # Recurse into addrmaps, regfiles, and other containers

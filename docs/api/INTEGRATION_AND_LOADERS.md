@@ -56,11 +56,20 @@ model = load_rdl(
 )
 ```
 
-The loader honors the built-in SystemRDL `dontcompare` property: any
-field with `dontcompare = true;` is loaded as `volatile=True`, so the
-predictor skips read-checks. If the designer didn't annotate static RO
-fields, the verification side can still opt them into checking with
-`RegisterModel.force_check_ro()` (see Core Model docs).
+The loader honors the built-in SystemRDL `dontcompare` property as a
+bidirectional signal on the field's `volatile` flag:
+
+| RDL annotation                | Loaded `volatile` | Read-checked? |
+| ----------------------------- | ----------------- | ------------- |
+| (no annotation)               | inferred from access type (RO/RCLR/RSET → True; RW/W1C/W1S → False) | depends on access |
+| `dontcompare;` or `= true;`   | True              | No            |
+| `dontcompare = false;`        | False             | Yes (even for RO) |
+
+Designers can therefore use `dontcompare = false;` on a static RO field
+(IDs, versions, capability bits) to opt it into reset-value checking
+without any Python-side override. For RDL the verification environment
+can't edit, `RegisterModel.force_check_ro()` is the post-load
+alternative (see Core Model docs).
 
 ## Backdoor resolvers
 
