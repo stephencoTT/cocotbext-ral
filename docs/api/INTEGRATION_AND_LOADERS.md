@@ -56,6 +56,12 @@ model = load_rdl(
 )
 ```
 
+The loader honors the built-in SystemRDL `dontcompare` property: any
+field with `dontcompare = true;` is loaded as `volatile=True`, so the
+predictor skips read-checks. If the designer didn't annotate static RO
+fields, the verification side can still opt them into checking with
+`RegisterModel.force_check_ro()` (see Core Model docs).
+
 ## Backdoor resolvers
 
 ### BackdoorResolver (base)

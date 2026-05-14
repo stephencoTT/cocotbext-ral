@@ -101,3 +101,24 @@ model.register_count  # number of registers
 model.reset()         # reset all registers to defaults
 model.summary()       # formatted summary string
 ```
+
+### Force-check RO fields
+
+RO fields are volatile by default, so the predictor skips them on read.
+For static RO fields (IDs, versions, capability bits) the verification
+side can opt them into checking without modifying the RDL/JSON source:
+
+```python
+# Per-register: flip every RO field in this register to non-volatile
+model.force_check_ro("ip.ID")
+
+# Per-field: only flip one specific field
+model.force_check_ro("ip.STATUS", field_name="version_major")
+
+# Sledgehammer: flip every RO field in the entire model
+model.force_check_all_ro()
+```
+
+Each call returns the number of fields actually flipped. Use sparingly —
+only safe when the targeted RO fields are not hardware-driven, otherwise
+you'll get false read mismatches.

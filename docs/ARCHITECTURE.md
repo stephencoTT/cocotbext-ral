@@ -56,7 +56,7 @@ rewrite.
 
 ### Volatile inference
 
-`RegisterField` auto-infers `volatile=True` for RO, RCLR, and RSET fields. Volatile fields are not prediction-checked on read, since hardware may change their value at any time. This can be overridden with an explicit `volatile=True/False` parameter.
+`RegisterField` auto-infers `volatile=True` for RO, RCLR, and RSET fields. Volatile fields are not prediction-checked on read, since hardware may change their value at any time. This can be overridden with an explicit `volatile=True/False` parameter, or post-load via `RegisterModel.force_check_ro()` / `force_check_all_ro()` when verification wants to check static RO fields (IDs, versions, capability bits) that the source spec didn't annotate. The RDL loader also honors the built-in `dontcompare` property as a volatile signal.
 
 ### RMW safety
 
