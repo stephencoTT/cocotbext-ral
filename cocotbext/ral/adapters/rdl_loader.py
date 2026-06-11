@@ -62,12 +62,21 @@ def _walk_node(node, model: RegisterModel, name_prefix: str = ""):
         FieldNode,
         MemNode,
         RootNode,
+        SignalNode,
     )
 
     # RootNode is a wrapper — don't include it in the name hierarchy
     if isinstance(node, RootNode):
         for child in node.children(unroll=True):
             _walk_node(child, model, name_prefix)
+        return
+
+    # SystemRDL `signal` components are non-addressable hardware wires
+    # (e.g. an input feeding a field's reset, or a clock/reset signal).
+    # They are not part of the software register map and SignalNode lacks
+    # the addressable-node API (no .is_array / .absolute_address), so skip
+    # them outright.
+    if isinstance(node, SignalNode):
         return
 
     # Build the name for this node, including array index if applicable
