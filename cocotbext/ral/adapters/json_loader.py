@@ -4,8 +4,7 @@ Parses the hierarchical JSON format produced by PeakRDL-based JSON
 exporters (``{"type": "addrmap"}`` at the root, with nested
 ``regfile``, ``reg``, ``field``, and ``mem`` children) into the RAL
 ``RegisterModel``. Any tool that walks a ``systemrdl`` model and emits
-this shape will work -- one example is ``create_reg_json.py`` from
-Tenstorrent's ``reg_flow`` package.
+this shape will work.
 """
 
 import json
