@@ -113,7 +113,7 @@ class TransactionLogger:
     Usage::
 
         logger = TransactionLogger("register_txns.log")
-        logger.write_header(ral_name="smu", protocol="axi", ...)
+        logger.write_header(ral_name="top", protocol="axi", ...)
         logger.log_write(...)
         logger.log_read(...)
         logger.write_summary()

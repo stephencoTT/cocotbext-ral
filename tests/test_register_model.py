@@ -90,7 +90,7 @@ class TestRegister(unittest.TestCase):
 class TestRegisterBlock(unittest.TestCase):
 
     def test_block_add_register(self):
-        block = RegisterBlock("smu", base_address=0x1000)
+        block = RegisterBlock("top", base_address=0x1000)
         reg = Register("SCRATCH", address=0x1000, fields=[
             RegisterField("data", lsb=0, msb=31, reset_value=0),
         ])
@@ -109,8 +109,8 @@ class TestRegisterModel(unittest.TestCase):
         r1 = Register("SCRATCH_1", address=0x104, fields=[
             RegisterField("data", lsb=0, msb=31, reset_value=0),
         ])
-        model.add_register(r0, hierarchical_name="smu.noc2axi.SCRATCH_0")
-        model.add_register(r1, hierarchical_name="smu.noc2axi.SCRATCH_1")
+        model.add_register(r0, hierarchical_name="top.block.SCRATCH_0")
+        model.add_register(r1, hierarchical_name="top.block.SCRATCH_1")
         return model
 
     def test_model_add_and_lookup_by_address(self):
@@ -121,7 +121,7 @@ class TestRegisterModel(unittest.TestCase):
 
     def test_model_lookup_by_hierarchical_name(self):
         model = self._make_model()
-        reg = model.get_register("smu.noc2axi.SCRATCH_0")
+        reg = model.get_register("top.block.SCRATCH_0")
         self.assertIsNotNone(reg)
         self.assertEqual(reg.address, 0x100)
 
@@ -133,8 +133,8 @@ class TestRegisterModel(unittest.TestCase):
 
     def test_model_suffix_match(self):
         model = self._make_model()
-        # suffix match: "noc2axi.SCRATCH_0" should match "smu.noc2axi.SCRATCH_0"
-        reg = model.get_register("noc2axi.SCRATCH_0")
+        # suffix match: "block.SCRATCH_0" should match "top.block.SCRATCH_0"
+        reg = model.get_register("block.SCRATCH_0")
         self.assertIsNotNone(reg)
         self.assertEqual(reg.address, 0x100)
 

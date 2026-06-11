@@ -235,5 +235,41 @@ class TestRdlLoaderHierarchicalNaming(unittest.TestCase):
         self.assertIn("CTRL", reg.hierarchical_name)
 
 
+class TestRdlLoaderSignals(unittest.TestCase):
+    """SystemRDL `signal` components are non-addressable hardware wires
+    (e.g. an input feeding field resets, or a clock/reset signal). They
+    must be skipped by the loader rather than crashing it — SignalNode has
+    no addressable-node API (no .is_array / .absolute_address).
+    """
+
+    def test_signal_in_addrmap_is_skipped(self):
+        model = _compile_rdl("""
+            addrmap ip {
+                signal { signalwidth = 8; } cfg_i;
+                reg { regwidth = 32;
+                    field { sw = rw; hw = r; } v[31:0] = 0;
+                } R @ 0x000;
+            };
+        """)
+        regs = model.all_registers()
+        self.assertEqual(len(regs), 1)
+        self.assertEqual(regs[0].name, "R")
+
+    def test_signal_array_is_skipped(self):
+        # A signal array declared alongside the registers must not derail
+        # the walk (SignalNode has no .is_array / .current_idx API).
+        model = _compile_rdl("""
+            addrmap ip {
+                signal { signalwidth = 8; } id_i[8];
+                reg { regwidth = 32;
+                    field { sw = rw; hw = r; } v[31:0] = 0;
+                } CTRL @ 0x000;
+            };
+        """)
+        regs = model.all_registers()
+        self.assertEqual(len(regs), 1)
+        self.assertEqual(regs[0].name, "CTRL")
+
+
 if __name__ == "__main__":
     unittest.main()
