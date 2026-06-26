@@ -15,17 +15,33 @@ from ..register_model import (
     Memory,
     RegisterField,
     Register,
-    RegisterBlock,
     RegisterModel,
     SwAccess,
 )
 
 
-def _map_sw_access(sw_access_str: str, woclr: int) -> SwAccess:
-    """Map JSON sw_access string + woclr flag to SwAccess enum."""
-    sw = sw_access_str.lower()
-    if sw == "rw" and woclr:
-        return SwAccess.WOCLR
+def _map_sw_access(
+    sw_access_str: str,
+    woclr: int = 0,
+    woset: int = 0,
+    rclr: int = 0,
+    rset: int = 0,
+) -> SwAccess:
+    """Map a JSON ``sw_access`` string plus side-effect flags to ``SwAccess``.
+
+    Side-effect precedence matches the RDL loader: write side-effects
+    (``woclr`` / ``woset``) win over read side-effects (``rclr`` / ``rset``),
+    which win over the plain access type.
+    """
+    sw = (sw_access_str or "rw").lower()
+    if woclr:
+        return SwAccess.W1C
+    if woset:
+        return SwAccess.W1S
+    if rclr:
+        return SwAccess.RCLR
+    if rset:
+        return SwAccess.RSET
     if sw == "rw":
         return SwAccess.RW
     if sw == "r":
@@ -34,6 +50,25 @@ def _map_sw_access(sw_access_str: str, woclr: int) -> SwAccess:
         return SwAccess.WO
     # Default to RW for unknown access types
     return SwAccess.RW
+
+
+def _parse_enum(encode):
+    """Normalize a JSON field encoding to {name: value}.
+
+    Accepts either a ``{name: value}`` mapping or a list of
+    ``{"name": ..., "value": ...}`` entries. Returns None when absent.
+    """
+    if not encode:
+        return None
+    if isinstance(encode, dict):
+        return {str(k): int(v) for k, v in encode.items()}
+    if isinstance(encode, list):
+        out = {}
+        for item in encode:
+            if isinstance(item, dict) and "name" in item and "value" in item:
+                out[str(item["name"])] = int(item["value"])
+        return out or None
+    return None
 
 
 def _parse_node(
@@ -64,9 +99,14 @@ def _parse_node(
                     reset_val = 0
                 reset_val = int(reset_val)
 
+                onwrite = str(child.get("onwrite", "")).lower()
+                onread = str(child.get("onread", "")).lower()
                 sw_access = _map_sw_access(
                     child.get("sw_access", "rw"),
-                    child.get("woclr", 0),
+                    woclr=child.get("woclr", 0) or onwrite == "woclr",
+                    woset=child.get("woset", 0) or onwrite == "woset",
+                    rclr=child.get("rclr", 0) or onread == "rclr",
+                    rset=child.get("rset", 0) or onread == "rset",
                 )
                 field = RegisterField(
                     name=child["inst_name"],
@@ -74,6 +114,8 @@ def _parse_node(
                     msb=child["msb"],
                     reset_value=reset_val,
                     sw_access=sw_access,
+                    enum=_parse_enum(child.get("encode") or child.get("enum")),
+                    is_counter=bool(child.get("counter", 0)),
                 )
                 fields.append(field)
 

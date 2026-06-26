@@ -30,13 +30,9 @@ rewrite.
         |   apply_write(), apply_read_side_effect(), check_on_read()
         |   volatile_policy: is_field_volatile(), check_allowed()
         |
-    RuntimeRAL (cocotb integration)
-    |   attach_master(), write(), read(), notify_external_write()
-    |
-    SafeRuntimeRAL
-    |   write_field() with assess_field_rmw() safety check
-    |
-    IntegratedRuntimeRAL
+    RuntimeRAL (cocotb integration -- the RAL class)
+        attach_master(), write(), read(), notify_external_write()
+        write_field() with assess_field_rmw() safety check
         backdoor_resolver: BackdoorResolver / PrefixBackdoorResolver / MappingBackdoorResolver
         txn_logger: TransactionLogger (optional file output)
         dump_runtime_state(), diff_runtime_state()
@@ -60,7 +56,7 @@ rewrite.
 
 ### RMW safety
 
-`SafeRuntimeRAL.write_field()` calls `assess_field_rmw()` before performing a read-modify-write. If any non-target field has a non-RW access type (RO, W1C, WO, etc.), the RMW is blocked with a `RuntimeError`. This prevents silent corruption of status bits, interrupt flags, or write-only command fields.
+`RuntimeRAL.write_field()` calls `assess_field_rmw()` before performing a read-modify-write. If any non-target field has a non-RW access type (RO, W1C, WO, etc.), the RMW is blocked with a `RuntimeError`. This prevents silent corruption of status bits, interrupt flags, or write-only command fields.
 
 ### Backdoor resolution
 
@@ -73,5 +69,5 @@ rewrite.
 ## Three tiers
 
 1. **Tier 0 (pure Python, zero dependencies)**: `register_model.py`, `state.py`, `access_policy.py`, `runtime_predictor.py`, `checker.py`, `rmw_policy.py`, `backdoor.py`, `debug.py`, `volatile_policy.py`, `transaction_logger.py`, adapters
-2. **Tier 1 (requires cocotb)**: `runtime_ral.py`, `safe_runtime_ral.py`, `integrated_runtime_ral.py`, `monitor.py`
+2. **Tier 1 (requires cocotb)**: `runtime_ral.py`, `monitor.py`
 3. **Tier 2 (optional)**: `rdl_loader.py` requires `systemrdl-compiler`

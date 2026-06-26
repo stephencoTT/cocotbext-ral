@@ -13,9 +13,7 @@ cocotbext/ral/
   access_policy.py          # AccessPolicy, PolicyRegistry
   runtime_predictor.py      # RuntimePredictor, PredictionResult, FieldResult
   checker.py                # Checker scoreboard
-  runtime_ral.py            # RuntimeRAL (requires cocotb)
-  safe_runtime_ral.py       # SafeRuntimeRAL (requires cocotb)
-  integrated_runtime_ral.py # IntegratedRuntimeRAL (requires cocotb)
+  runtime_ral.py            # RuntimeRAL: the RAL class (requires cocotb)
   transaction_logger.py     # TransactionLogger (optional file output)
   backdoor.py               # BackdoorResolver, PrefixBackdoorResolver, MappingBackdoorResolver
   rmw_policy.py             # RMW safety assessment
@@ -24,20 +22,28 @@ cocotbext/ral/
   monitor.py                # ApbRalMonitor, AxiLiteRalMonitor, AxiRalMonitor (requires cocotb)
   version.py                # __version__ (single source of truth)
   experimental.py           # Stable import point for runtime APIs
+  py.typed                  # PEP 561 marker (ships type hints to consumers)
   adapters/
     json_loader.py           # load_json()
     rdl_loader.py            # load_rdl() (requires systemrdl-compiler)
-tests/                       # 146 pytest unit tests
+tests/                       # 196 pure-Python pytest unit tests
 examples/                    # Usage examples
 docs/                        # Architecture and API documentation
 ```
 
-## Class hierarchy
+Works on both cocotb 1.x and cocotb 2.x. Lint/type-check with `ruff check
+cocotbext/` and `mypy` (both run in CI and are part of the `dev` extra).
+
+## The RAL class
+
+`RuntimeRAL` is the single RAL class. It layers, in one class:
 
 ```
-IntegratedRuntimeRAL   (backdoor + txn log + debug)
-  -> SafeRuntimeRAL    (RMW safety)
-    -> RuntimeRAL      (RuntimeState-backed prediction + front-door bus + monitor)
+RuntimeRAL
+  - RuntimeState-backed prediction + front-door bus + monitor
+  - conservative RMW safety on field writes
+  - pluggable backdoor path resolution
+  - optional transaction logging (txn_log=)
 ```
 
 ## Running tests
@@ -46,15 +52,15 @@ IntegratedRuntimeRAL   (backdoor + txn log + debug)
 python -m pytest tests/ -v
 ```
 
-All 146 tests pass. Tests are pure Python (no cocotb simulation needed).
+All 196 tests pass (RDL loader tests require the `rdl` extra). Tests are pure Python (no cocotb simulation needed).
 
 ## Key design decisions
 
 - **Spec/state separation**: `RegisterModel` is immutable structural data; `RuntimeState` holds every bit of mutable per-instance state (mirrored value, desired value, check_enabled, dirty). One model can back many RAL instances.
 - **Policy-based access**: `AccessPolicy` encapsulates write/read behavior per `SwAccess` type.
 - **Volatile inference**: RO, RCLR, RSET default to `volatile=True`. Override with explicit `volatile=` parameter.
-- **Transaction logging**: Optional, zero-overhead when disabled. Enabled via `txn_log=` on `IntegratedRuntimeRAL`. Field RMW writes render as one WRITE_FIELD entry with the internal bus read + write-back nested under `Bus traffic:`.
-- **Mirror update modes** (see `docs/api/RUNTIME_API.md`): `write()` drives the bus + applies policy. `notify_external_write()` applies policy without bus traffic. `set_predicted()` / `set_field_predicted()` is a raw mirror overwrite (use when hardware forced a value).
+- **Transaction logging**: Optional, zero-overhead when disabled. Enabled via `txn_log=` on `RuntimeRAL`. Field RMW writes render as one WRITE_FIELD entry with the internal bus read + write-back nested under `Bus traffic:`.
+- **Mirror update modes** (see `docs/api/RUNTIME_API.md`): `write()` drives the bus + applies policy. `notify_external_write()` applies write policy without bus traffic; `notify_external_read()` applies read side-effects (RCLR/RSET) without bus traffic. `set_predicted()` / `set_field_predicted()` is a raw mirror overwrite (use when hardware forced a value).
 
 ## Common development tasks
 

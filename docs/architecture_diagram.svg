@@ -21,5 +21,5 @@
   <line x1="400" y1="230" x2="400" y2="270" stroke="#333" marker-end="url(#arrow)"/>
 
   <rect x="250" y="270" width="300" height="50" fill="#f0f0f0" stroke="#333"/>
-  <text x="400" y="300" text-anchor="middle" font-size="14">IntegratedRuntimeRAL</text>
+  <text x="400" y="300" text-anchor="middle" font-size="14">RuntimeRAL</text>
 </svg>

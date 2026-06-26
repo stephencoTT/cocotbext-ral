@@ -41,6 +41,11 @@ Expected JSON structure:
 
 The `woclr` flag: `sw_access="rw"` + `woclr=1` maps to `SwAccess.W1C`.
 
+Side-effect flags `woset` / `rclr` / `rset` map to `W1S` / `RCLR` / `RSET`
+(or the `onwrite`/`onread` string forms). A field may also carry
+`"encode": {"NAME": value, ...}` (enumeration) and `"counter": 1`
+(hardware counter → volatile).
+
 ## RDL loader
 
 Loads from SystemRDL source. Requires `systemrdl-compiler`.
@@ -70,6 +75,22 @@ Designers can therefore use `dontcompare = false;` on a static RO field
 without any Python-side override. For RDL the verification environment
 can't edit, `RegisterModel.force_check_ro()` is the post-load
 alternative (see Core Model docs).
+
+The RDL loader also maps the `encode` property to a field enumeration and
+the `counter` property to a volatile counter field.
+
+## Memory regions
+
+`Memory` provides `uvm_mem`-style access. Single-word and burst:
+
+```python
+mem = ral.get_memory("buf")          # attaches this RAL for bus access
+await mem.write(0x10, 0xDEADBEEF)     # single word at base + 0x10
+val = await mem.read(0x10)
+
+await mem.write_block(0x0, [0xA, 0xB, 0xC])   # 3 words, 4-byte stride
+words = await mem.read_block(0x0, count=3)
+```
 
 ## Backdoor resolvers
 
@@ -115,16 +136,16 @@ resolver = MappingBackdoorResolver(
 Writes detailed per-transaction records to a file.
 
 ```python
-from cocotbext.ral import IntegratedRuntimeRAL
+from cocotbext.ral import RuntimeRAL
 
 # Enable with default filename
-ral = IntegratedRuntimeRAL("ip", model, txn_log=True)   # -> register_txns.log
+ral = RuntimeRAL("ip", model, txn_log=True)   # -> register_txns.log
 
 # Enable with custom path
-ral = IntegratedRuntimeRAL("ip", model, txn_log="custom.log")
+ral = RuntimeRAL("ip", model, txn_log="custom.log")
 
 # Enable with file object
-ral = IntegratedRuntimeRAL("ip", model, txn_log=open("out.log", "w"))
+ral = RuntimeRAL("ip", model, txn_log=open("out.log", "w"))
 ```
 
 ### Log output format

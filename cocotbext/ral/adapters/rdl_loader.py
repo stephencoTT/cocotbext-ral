@@ -4,7 +4,7 @@ Uses the systemrdl-compiler package to parse RDL and produce the same
 RegisterModel as the JSON loader.
 """
 
-from typing import List, Union
+from typing import List, Optional, Union
 from pathlib import Path
 
 from ..register_model import (
@@ -34,12 +34,35 @@ def _resolve_volatile(field_node):
     return None
 
 
-def _map_sw_access(sw_prop, woclr: bool) -> SwAccess:
-    """Map systemrdl AccessType + woclr to SwAccess enum."""
+def _map_sw_access(
+    sw_prop,
+    woclr: bool = False,
+    woset: bool = False,
+    rclr: bool = False,
+    rset: bool = False,
+) -> SwAccess:
+    """Map a systemrdl ``AccessType`` plus side-effect flags to ``SwAccess``.
+
+    SystemRDL expresses field side-effects via the ``onwrite`` / ``onread``
+    properties; systemrdl-compiler also exposes the boolean shortcuts
+    ``woclr`` / ``woset`` / ``rclr`` / ``rset`` (true when the corresponding
+    ``onwrite`` / ``onread`` is set), which is what this consumes.
+
+    Precedence -- only relevant for contradictory RDL that sets more than one
+    side-effect on a single field -- is: write side-effects (``woclr`` /
+    ``woset``) win over read side-effects (``rclr`` / ``rset``), which win
+    over the plain ``sw`` access type.
+    """
     from systemrdl.rdltypes import AccessType  # type: ignore
 
-    if sw_prop == AccessType.rw and woclr:
-        return SwAccess.WOCLR
+    if woclr:
+        return SwAccess.W1C
+    if woset:
+        return SwAccess.W1S
+    if rclr:
+        return SwAccess.RCLR
+    if rset:
+        return SwAccess.RSET
     if sw_prop == AccessType.rw:
         return SwAccess.RW
     if sw_prop == AccessType.r:
@@ -47,6 +70,23 @@ def _map_sw_access(sw_prop, woclr: bool) -> SwAccess:
     if sw_prop == AccessType.w:
         return SwAccess.WO
     return SwAccess.RW
+
+
+def _map_encode(encode):
+    """Map a SystemRDL ``encode`` property (a UserEnum class) to {name: value}.
+
+    Returns None when the field has no encoding. Defensive across the
+    iterable-Enum and ``__members__`` representations.
+    """
+    if encode is None:
+        return None
+    try:
+        return {m.name: int(m.value) for m in encode}
+    except TypeError:
+        members = getattr(encode, "__members__", None)
+        if members:
+            return {name: int(getattr(m, "value", m)) for name, m in members.items()}
+    return None
 
 
 def _walk_node(node, model: RegisterModel, name_prefix: str = ""):
@@ -99,10 +139,12 @@ def _walk_node(node, model: RegisterModel, name_prefix: str = ""):
                 reset_val = field_node.get_property("reset") or 0
                 if not isinstance(reset_val, int):
                     reset_val = 0
-                woclr = bool(field_node.get_property("woclr"))
                 sw_access = _map_sw_access(
                     field_node.get_property("sw"),
-                    woclr,
+                    woclr=bool(field_node.get_property("woclr")),
+                    woset=bool(field_node.get_property("woset")),
+                    rclr=bool(field_node.get_property("rclr")),
+                    rset=bool(field_node.get_property("rset")),
                 )
                 volatile = _resolve_volatile(field_node)
                 field = RegisterField(
@@ -112,6 +154,8 @@ def _walk_node(node, model: RegisterModel, name_prefix: str = ""):
                     reset_value=reset_val,
                     sw_access=sw_access,
                     volatile=volatile,
+                    enum=_map_encode(field_node.get_property("encode")),
+                    is_counter=bool(field_node.get_property("counter")),
                 )
                 fields.append(field)
 
@@ -148,7 +192,7 @@ def _walk_node(node, model: RegisterModel, name_prefix: str = ""):
 def load_rdl(
     rdl_path: Union[str, Path],
     top_name: str = "",
-    incdir: List[str] = None,
+    incdir: Optional[List[str]] = None,
     model_name: str = "",
 ) -> RegisterModel:
     """Load a RegisterModel from SystemRDL source.

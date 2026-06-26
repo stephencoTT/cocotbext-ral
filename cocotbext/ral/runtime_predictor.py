@@ -8,7 +8,7 @@ all mutable mirror state lives in RuntimeState.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field as dc_field
 from typing import List, Optional
 
 from .access_policy import PolicyRegistry
@@ -29,8 +29,8 @@ class PredictionResult:
     register_name: str
     address: int
     passed: bool
-    field_results: List[FieldResult] = field(default_factory=list)
-    error_messages: List[str] = field(default_factory=list)
+    field_results: List[FieldResult] = dc_field(default_factory=list)
+    error_messages: List[str] = dc_field(default_factory=list)
 
 
 class RuntimePredictor:
@@ -77,6 +77,34 @@ class RuntimePredictor:
             policy = self.policy_registry.policy_for(field)
             policy.apply_write(field, field_state, field_data)
 
+
+    def apply_external_read(self, address: int, size_bytes: int = 4) -> None:
+        """Apply read side-effects to the mirror as if an external agent read
+        this register, without driving the bus and without checking.
+
+        For fields with read side-effects (RCLR -> 0, RSET -> all-1s) an
+        external read changes hardware state, so the mirror must follow to
+        stay consistent. Fields without read side-effects are unaffected.
+        Counterpart to :meth:`predict_write` for external (off-RAL) reads.
+        """
+        reg = self.model.get_register_by_address(address)
+        if reg is None:
+            self.log.debug(f"External read from unmapped address 0x{address:08x}, ignoring")
+            return
+
+        reg_state = self.runtime_state.get_register_state(address)
+        if reg_state is None:
+            self.log.debug(f"Missing runtime state for 0x{address:08x}, ignoring")
+            return
+
+        self.log.debug(
+            f"apply_external_read: {reg.hierarchical_name} @ 0x{address:08x}"
+        )
+
+        for field in reg.fields:
+            field_state = reg_state.fields[field.name]
+            policy = self.policy_registry.policy_for(field)
+            policy.apply_read_side_effect(field, field_state)
 
     def predict_read(self, address: int, actual_data: int, size_bytes: int = 4) -> PredictionResult:
         reg = self.model.get_register_by_address(address)

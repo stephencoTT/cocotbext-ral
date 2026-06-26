@@ -1,6 +1,6 @@
 """Cocotb Register Abstraction Layer (RAL).
 
-Generic, reusable RAL with zero Quasar-specific dependencies.
+Generic, reusable RAL with zero project-specific dependencies.
 """
 
 from .version import __version__
@@ -9,14 +9,24 @@ from .runtime_predictor import RuntimePredictor, PredictionResult, FieldResult
 from .state import RuntimeState, RegisterState, FieldState
 from .checker import Checker
 
-# Runtime-backed RAL APIs.
+# Runtime-backed RAL API.
 from .runtime_ral import RuntimeRAL
-from .safe_runtime_ral import SafeRuntimeRAL
-from .integrated_runtime_ral import IntegratedRuntimeRAL
 from .transaction_logger import TransactionLogger
 
-# Cocotb-dependent classes.
+# Cocotb-dependent classes (optional: only importable when cocotb is present).
 try:
-    from .monitor import ApbRalMonitor, AxiLiteRalMonitor, AxiRalMonitor
+    from .monitor import ApbRalMonitor, AxiLiteRalMonitor, AxiRalMonitor  # noqa: F401
 except ImportError:
     pass
+
+__all__ = [
+    "__version__",
+    # Core model
+    "RegisterField", "Register", "RegisterBlock", "RegisterModel", "SwAccess", "Memory",
+    # Prediction / checking
+    "RuntimePredictor", "PredictionResult", "FieldResult", "Checker",
+    # Runtime state
+    "RuntimeState", "RegisterState", "FieldState",
+    # Runtime-backed RAL
+    "RuntimeRAL", "TransactionLogger",
+]

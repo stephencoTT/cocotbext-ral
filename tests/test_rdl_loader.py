@@ -271,5 +271,64 @@ class TestRdlLoaderSignals(unittest.TestCase):
         self.assertEqual(regs[0].name, "CTRL")
 
 
+class TestRdlLoaderAccessSideEffects(unittest.TestCase):
+    """onwrite / onread side-effects map to W1C / W1S / RCLR / RSET."""
+
+    def test_onwrite_onread_side_effects_map(self):
+        model = _compile_rdl("""
+            addrmap ip {
+                reg { field { sw = rw; onwrite = woclr; } f[7:0]; } R_W1C @ 0x00;
+                reg { field { sw = rw; onwrite = woset; } f[7:0]; } R_W1S @ 0x04;
+                reg { field { sw = r;  onread  = rclr;  } f[7:0]; } R_RCLR @ 0x08;
+                reg { field { sw = r;  onread  = rset;  } f[7:0]; } R_RSET @ 0x0C;
+                reg { field { sw = w; } f[7:0]; } R_WO @ 0x10;
+            };
+        """)
+        access = {r.name: r.fields[0].sw_access for r in model.all_registers()}
+        self.assertEqual(access["R_W1C"], SwAccess.W1C)
+        self.assertEqual(access["R_W1S"], SwAccess.W1S)
+        self.assertEqual(access["R_RCLR"], SwAccess.RCLR)
+        self.assertEqual(access["R_RSET"], SwAccess.RSET)
+        self.assertEqual(access["R_WO"], SwAccess.WO)
+
+    def test_rclr_rset_default_volatile(self):
+        # Read-clear / read-set fields are hardware-mutated on read, so the
+        # loader should leave them volatile (not prediction-checked).
+        model = _compile_rdl("""
+            addrmap ip {
+                reg { field { sw = r; onread = rclr; } f[7:0]; } R @ 0x0;
+            };
+        """)
+        fld = model.all_registers()[0].fields[0]
+        self.assertTrue(fld.is_volatile)
+
+
+class TestRdlLoaderEnumAndCounter(unittest.TestCase):
+
+    def test_encode_maps_to_field_enum(self):
+        model = _compile_rdl("""
+            enum mode_e { OFF = 2'd0; SLOW = 2'd1; FAST = 2'd2; };
+            addrmap ip {
+                reg {
+                    field { sw = rw; encode = mode_e; } mode[1:0];
+                } CTRL @ 0x0;
+            };
+        """)
+        mode = model.get_register("CTRL").get_field("mode")
+        self.assertEqual(mode.enum, {"OFF": 0, "SLOW": 1, "FAST": 2})
+        self.assertEqual(mode.enum_value("FAST"), 2)
+        self.assertEqual(mode.enum_name(1), "SLOW")
+
+    def test_counter_field_is_volatile(self):
+        model = _compile_rdl("""
+            addrmap ip {
+                reg { field { sw = r; counter; } cnt[7:0]; } CNT @ 0x0;
+            };
+        """)
+        cnt = model.get_register("CNT").get_field("cnt")
+        self.assertTrue(cnt.is_counter)
+        self.assertTrue(cnt.is_volatile)
+
+
 if __name__ == "__main__":
     unittest.main()
