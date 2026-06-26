@@ -11,7 +11,7 @@ license = "MIT"
 requires-python = ">=3.9"
 keywords = ["cocotb", "ral", "register model", "verification", "eda"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Framework :: cocotb",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
@@ -27,9 +27,12 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
+# Works with both cocotb 1.x and 2.x. NOTE: under cocotb 2.x you need a
+# cocotbext-axi build that is itself cocotb-2.x compatible (the public
+# release may lag; use a patched/forked build if needed).
 cocotb = ["cocotb>=1.8.0", "cocotbext-axi>=0.1.16"]
 rdl = ["systemrdl-compiler>=1.15"]
-dev = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "ruff>=0.6", "mypy>=1.8"]
 all = ["cocotbext-ral[cocotb,rdl,dev]"]
 
 [project.urls]
@@ -42,5 +45,24 @@ version = {attr = "cocotbext.ral.version.__version__"}
 [tool.setuptools.packages.find]
 include = ["cocotbext.*"]
 
+[tool.setuptools.package-data]
+"cocotbext.ral" = ["py.typed"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py39"
+
+[tool.ruff.lint]
+# E731: assigning a lambda to a name is fine for the concise field/name
+# matchers in register_model.find_registers / find_fields.
+ignore = ["E731"]
+
+[tool.mypy]
+python_version = "3.9"
+files = ["cocotbext"]
+ignore_missing_imports = true
+# Pragmatic baseline: catch real type regressions without demanding full
+# strictness on a codebase that interops with dynamically-typed cocotb.
+no_implicit_optional = true

@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict
 
-from .register_model import RegisterModel, RegisterField, Register
+from .register_model import RegisterModel, RegisterField
 
 
 @dataclass
@@ -47,10 +47,10 @@ class RegisterState:
     def attach_specs(self, specs: Dict[str, RegisterField]) -> None:
         self._field_specs = specs
 
-    def reset(self) -> None:
+    def reset(self, domain: "str | None" = None) -> None:
         for field_name, state in self.fields.items():
             field = self._field_specs[field_name]
-            state.reset(field.reset_value)
+            state.reset(field.reset_value_for(domain))
 
 
 class RuntimeState:
@@ -86,9 +86,9 @@ class RuntimeState:
             return None
         return self._registers.get(reg.address)
 
-    def reset(self) -> None:
+    def reset(self, domain: "str | None" = None) -> None:
         for reg_state in self._registers.values():
-            reg_state.reset()
+            reg_state.reset(domain)
 
     def set_field_mirrored(self, reg_name_or_addr: int | str, field_name: str, value: int) -> None:
         reg = self.model.get_register(reg_name_or_addr)

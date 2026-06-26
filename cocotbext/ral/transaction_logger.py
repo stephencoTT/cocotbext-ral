@@ -2,8 +2,7 @@
 
 Produces a detailed, grep-friendly log of every front-door register
 transaction driven through a RAL instance.  Enabled by passing
-``txn_log=True`` (or a file path) when constructing an
-IntegratedRuntimeRAL.
+``txn_log=True`` (or a file path) when constructing a ``RuntimeRAL``.
 
 The log is optional and has zero overhead when disabled.
 """
@@ -20,7 +19,9 @@ def _sim_time_str() -> str:
     """Return the current simulation time as a human-readable string."""
     try:
         from cocotb.utils import get_sim_time
-        t = get_sim_time(units="ns")
+        # Positional unit arg works on both cocotb 1.x (`units=`) and
+        # cocotb 2.x (`unit=`), which renamed the keyword.
+        t = get_sim_time("ns")
         if t >= 1_000_000:
             return f"{t / 1_000_000:.2f}ms"
         elif t >= 1_000:
@@ -172,7 +173,7 @@ class TransactionLogger:
         w = self._file.write
         bar = "=" * 80
         w(f"\n{bar}\n")
-        w(f"TRANSACTION SUMMARY\n")
+        w("TRANSACTION SUMMARY\n")
         w(f"  Total      : {self._txn_count}\n")
         w(f"  Writes     : {self._writes}\n")
         w(f"  Reads      : {self._reads}\n")
@@ -377,7 +378,7 @@ class TransactionLogger:
         :meth:`log_write_field` consumes the buffer and renders the
         children nested under the field-write summary.
 
-        Typical callers are :class:`IntegratedRuntimeRAL` — test code does
+        Typical caller is :class:`RuntimeRAL` — test code does
         not normally invoke this directly.
         """
         self._rmw_substeps = []
@@ -425,7 +426,7 @@ class TransactionLogger:
         w(f"  Status     : {txn.status}\n")
         w(f"  Mirror     : 0x{txn.mirror_before:08X} -> 0x{txn.mirror_after:08X}\n")
         if txn.fields:
-            w(f"  Fields:\n")
+            w("  Fields:\n")
             for fd in txn.fields:
                 prev = f"  (was 0x{fd.previous:X})" if fd.previous is not None else ""
                 w(f"    [{fd.msb:2d}:{fd.lsb:2d}] {fd.name:<16s} = 0x{fd.value:X}{prev}\n")
@@ -447,7 +448,7 @@ class TransactionLogger:
         w(f"  Status     : {txn.status}\n")
         w(f"  Mirror     : 0x{txn.mirror_before:08X}\n")
         if txn.fields:
-            w(f"  Fields:\n")
+            w("  Fields:\n")
             for fd in txn.fields:
                 if fd.expected is not None:
                     match_str = "PASS" if fd.matched else "MISMATCH"
@@ -457,7 +458,7 @@ class TransactionLogger:
                     w(f"    [{fd.msb:2d}:{fd.lsb:2d}] {fd.name:<16s} "
                       f"actual=0x{fd.value:X}  (not checked)\n")
         if txn.error_messages:
-            w(f"  Errors:\n")
+            w("  Errors:\n")
             for msg in txn.error_messages:
                 w(f"    - {msg}\n")
         w("\n")
@@ -487,7 +488,7 @@ class TransactionLogger:
         w(f"  Status     : {txn.status}\n")
         w(f"  Mirror     : 0x{txn.mirror_before:08X} -> 0x{txn.mirror_after:08X}\n")
         if txn.substeps:
-            w(f"  Bus traffic:\n")
+            w("  Bus traffic:\n")
             for sub in txn.substeps:
                 w(f"    {_substep_summary(sub)}\n")
         w("\n")

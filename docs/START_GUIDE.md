@@ -30,9 +30,9 @@ model = load_rdl("regs.rdl", top_name="my_ip", incdir=["rdl_includes/"])
 ## 3. Create a RAL instance
 
 ```python
-from cocotbext.ral import IntegratedRuntimeRAL
+from cocotbext.ral import RuntimeRAL
 
-ral = IntegratedRuntimeRAL(
+ral = RuntimeRAL(
     name="my_ip",
     model=model,
     dut_handle=dut,          # optional: enables backdoor access
@@ -110,8 +110,9 @@ ral.set_field_predicted("CTRL", "enable", 1)
 # Disable checking for volatile/unpredictable registers
 ral.disable_check("CTRL", "status")
 
-# Notify predictor about external writes
-ral.notify_external_write(0x0, 0xFF)
+# Notify predictor about external accesses by another agent (no bus traffic)
+ral.notify_external_write(0x0, 0xFF)   # applies write policy (W1C clears, etc.)
+ral.notify_external_read(0x0)          # applies read side-effects (RCLR -> 0, RSET -> all-1s)
 
 # Reset model to defaults
 ral.reset()
@@ -133,8 +134,8 @@ One model, multiple tile instances with independent state:
 ```python
 model = load_json("tile_registers.json")
 
-ral_tile_a = IntegratedRuntimeRAL("tile_a", model, txn_log="tile_a.log")
-ral_tile_b = IntegratedRuntimeRAL("tile_b", model, txn_log="tile_b.log")
+ral_tile_a = RuntimeRAL("tile_a", model, txn_log="tile_a.log")
+ral_tile_b = RuntimeRAL("tile_b", model, txn_log="tile_b.log")
 
 # Each has independent RuntimeState
 await ral_tile_a.write(0x100, 0xAAAA)
@@ -147,7 +148,7 @@ await ral_tile_b.write(0x100, 0xBBBB)
 ```python
 from cocotbext.ral.backdoor import PrefixBackdoorResolver
 
-ral = IntegratedRuntimeRAL(
+ral = RuntimeRAL(
     "tile_3_4", model,
     backdoor_resolver=PrefixBackdoorResolver("dut.gen_x[3].gen_y[4].tile"),
 )

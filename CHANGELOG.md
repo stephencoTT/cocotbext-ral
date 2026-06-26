@@ -1,5 +1,89 @@
 # Changelog
 
+## v0.6.0
+
+### Breaking changes: single runtime RAL class
+- Consolidated the three runtime RAL classes into one. `RuntimeRAL` is now
+  the single RAL class and absorbs everything the old subclasses provided:
+  RuntimeState-backed prediction + front-door bus access and monitor
+  (formerly `RuntimeRAL`), conservative read-modify-write safety on
+  `write_field()` (formerly `SafeRuntimeRAL`), and pluggable backdoor
+  resolution, debug helpers, and optional transaction logging (formerly
+  `IntegratedRuntimeRAL`).
+- Removed `SafeRuntimeRAL` and `cocotbext/ral/safe_runtime_ral.py`.
+- Removed `IntegratedRuntimeRAL` and `cocotbext/ral/integrated_runtime_ral.py`.
+- Top-level exports no longer include `SafeRuntimeRAL` or
+  `IntegratedRuntimeRAL`.
+
+### Migration
+- Replace `IntegratedRuntimeRAL(...)` and `SafeRuntimeRAL(...)` with
+  `RuntimeRAL(...)`. The constructor signature is unchanged from
+  `IntegratedRuntimeRAL`: `RuntimeRAL(name, model, dut_handle=None,
+  backdoor_resolver=None, txn_log=None)`.
+- `RuntimeRAL.write_field()` now always performs the RMW safety check that
+  used to require `SafeRuntimeRAL`. Code that previously relied on the bare
+  `RuntimeRAL` performing an unchecked RMW will now raise `RuntimeError`
+  on unsafe field writes; use `set_field_predicted()` / direct
+  `runtime_state` access for raw mirror manipulation if that is intended.
+
+### Additions
+- `RuntimeRAL.notify_external_read(address)`: read-side-effect counterpart
+  to `notify_external_write()`. Applies RCLR (→0) and RSET (→all-1s) read
+  side-effects to the mirror without driving the bus or checking, for when
+  another agent reads a read-clear / read-set register. Backed by
+  `RuntimePredictor.apply_external_read()`.
+- Loader access-type coverage: both the RDL and JSON loaders now map
+  `woset` → `W1S`, `rclr` → `RCLR`, and `rset` → `RSET` (in addition to
+  the existing `woclr` → `W1C` and plain `rw`/`r`/`w`). The JSON loader
+  accepts either boolean flags (`woset`/`rclr`/`rset`) or the
+  `onwrite`/`onread` string forms. Precedence: write side-effects win over
+  read side-effects, which win over the plain access type.
+- New example `examples/search_and_bulk.py` demonstrating `find_registers`
+  / `find_fields` / `group_by` and the `write_pattern` / `write_field_pattern`
+  / `read_pattern` / `write_many` bulk APIs over a replicated DMA0..DMA7 map.
+
+### cocotb 2.x compatibility
+- Now works on both cocotb 1.x and cocotb 2.x. cocotb 2.0 renamed the
+  `units=` keyword to `unit=` on `Timer` / `get_sim_time`; both call sites
+  now pass the unit positionally, which is valid on both lines.
+- `RuntimeRAL._resolve_hdl_value` (backdoor reads) handles cocotb 2.x
+  `LogicArray` values in addition to 1.x `BinaryValue`, mapping X/Z bits to
+  0 via the binary string instead of the removed `BinaryValue.n_bits` API.
+- Under cocotb 2.x you need a cocotb-2.x-compatible `cocotbext-axi` build
+  (see README "cocotb 1.x and 2.x").
+
+### Tooling / packaging
+- Ships a `py.typed` marker so downstream `mypy` / editors consume the
+  type hints.
+- `ruff` and `mypy` are now part of the `dev` extra and run in CI; the
+  package is lint-clean and type-checks cleanly.
+- CI (`.github/workflows/test.yml`): unit tests now install the `rdl`
+  extra so the SystemRDL loader path is exercised, plus a lint/type-check
+  job (`ruff` + `mypy`).
+
+### Modeling & access features
+- **Field enumerations**: `RegisterField(enum={...})` with
+  `enum_value(name)` / `enum_name(value)`. `write_field` / `set_field`
+  accept a symbolic name; `read_field_name()` returns it. RDL loader maps
+  the `encode` property; JSON loader accepts `encode`/`enum`.
+- **Reset domains**: `RegisterField(resets={"soft": ...})`,
+  `reset_value_for(domain)`, `Register.reset_domains()`, and
+  `RuntimeRAL.reset(domain=...)` for soft/secondary resets.
+- **Wide registers on narrow buses**: registers wider than the bus data
+  width split into multiple beats on APB (`RuntimeRAL(data_width=...)`).
+- **Bus-response checking**: `RuntimeRAL(check_response=True)` flags AXI
+  error responses (SLVERR/DECERR); `raise_on_bus_error` chooses raise vs log.
+- **Byte-strobe partial writes**: `write_field(..., partial=True)` skips the
+  RMW for byte-aligned fields, driving only those bytes via byte-enables.
+- **Pre/post callbacks**: `add_callback("pre_write"|"post_write"|"pre_read"
+  |"post_read", fn)` hooks fired around bus access.
+- **Memory burst**: `Memory.write_block()` / `read_block()`.
+- **Multiple address maps**: `RuntimeRAL(address_offset=...)` drives one
+  spec through several physical maps (one RAL per map, independent state).
+- **SystemRDL `counter`** fields load as volatile.
+- New example `examples/backdoor_tiled.py` (address offset + backdoor across
+  a tile grid).
+
 ## v0.3.1
 
 ### Breaking changes: legacy path removed

@@ -1,5 +1,7 @@
 # cocotbext-ral
 
+[![test](https://github.com/stephencoTT/cocotbext-ral/actions/workflows/test.yml/badge.svg)](https://github.com/stephencoTT/cocotbext-ral/actions/workflows/test.yml)
+
 A Python-native Register Abstraction Layer (RAL) for [cocotb](https://www.cocotb.org/).
 
 `cocotbext-ral` provides UVM-like register modeling, access-type-aware prediction, and automated checking -- all in pure Python, designed for cocotb hardware verification.
@@ -9,10 +11,13 @@ A Python-native Register Abstraction Layer (RAL) for [cocotb](https://www.cocotb
 - **Runtime-backed architecture** with clean separation of register spec vs mutable state
 - **Full access-type coverage**: RW, RO, WO, W1C, W1S, RCLR, RSET
 - **Smart volatile inference**: RO, RCLR, RSET fields default to volatile (overridable)
-- **Safe field writes** that reject unsafe read-modify-write sequences
-- **Backdoor resolution** that scales to replicated blocks and chiplets
+- **Safe field writes** that reject unsafe read-modify-write sequences, plus byte-strobe partial writes
+- **Field enumerations & reset domains** -- symbolic field values and soft/secondary resets
+- **Backdoor resolution** and **multiple address maps** that scale to replicated blocks and chiplets
+- **Wide-register splitting**, **bus-response checking**, and **pre/post access callbacks**
 - **Transaction logging** with detailed per-transaction file output
 - **Pure-Python core** -- model, predictor, and policies work without cocotb
+- **cocotb 1.x and 2.x** compatible
 
 ## Architecture
 
@@ -23,9 +28,9 @@ RegisterModel (spec)
         |
 RuntimePredictor + AccessPolicy
         |
-RuntimeRAL -> SafeRuntimeRAL -> IntegratedRuntimeRAL
-                                       |          |
-                                  Backdoor    Transaction Log
+     RuntimeRAL  -- front-door bus + prediction/checking, RMW safety,
+        |          backdoor resolution, and transaction logging
+   Backdoor / Transaction Log
 ```
 
 ## Installation
@@ -42,6 +47,18 @@ pip install cocotbext-ral[rdl]      # SystemRDL compiler
 pip install cocotbext-ral[all]      # Everything
 ```
 
+### cocotb 1.x and 2.x
+
+`cocotbext-ral` works on both cocotb 1.x and cocotb 2.x. Under **cocotb 2.x**
+you need a `cocotbext-axi` build that is itself cocotb-2.x compatible; the
+public PyPI release may lag, in which case install a patched/forked build:
+
+```bash
+pip install "cocotb>=2.0" cocotbext-axi
+```
+
+(The library itself ships type hints — `py.typed` — so editors and `mypy` see them.)
+
 ## Quick start
 
 ### With cocotb simulation
@@ -49,14 +66,14 @@ pip install cocotbext-ral[all]      # Everything
 ```python
 import cocotb
 from cocotbext.axi import AxiLiteMaster, AxiLiteBus
-from cocotbext.ral import IntegratedRuntimeRAL
+from cocotbext.ral import RuntimeRAL
 from cocotbext.ral.adapters import load_json
 
 @cocotb.test()
 async def test_registers(dut):
     model = load_json("registers.json")
 
-    ral = IntegratedRuntimeRAL("my_ip", model, dut_handle=dut, txn_log=True)
+    ral = RuntimeRAL("my_ip", model, dut_handle=dut, txn_log=True)
     master = AxiLiteMaster(AxiLiteBus.from_prefix(dut, "s_axil"), dut.clk, dut.rst)
     ral.attach_master(master, protocol="axil", interface="dut.s_axil")
 
@@ -98,9 +115,7 @@ assert result.passed
 
 | Class | Description |
 |---|---|
-| `IntegratedRuntimeRAL` | **Recommended.** Runtime state + RMW safety + backdoor + transaction log |
-| `SafeRuntimeRAL` | Runtime state + RMW safety checks |
-| `RuntimeRAL` | Runtime state-backed prediction |
+| `RuntimeRAL` | The RAL: runtime-state-backed prediction + front-door bus, RMW safety, backdoor resolution, and transaction logging |
 | `RuntimePredictor` | Standalone prediction engine (no cocotb needed) |
 | `RuntimeState` | Per-instance mutable register state |
 | `AccessPolicy` | Per-field read/write behavior |
@@ -137,10 +152,10 @@ Enable detailed per-transaction file output:
 
 ```python
 # Default filename (register_txns.log)
-ral = IntegratedRuntimeRAL("ip", model, txn_log=True)
+ral = RuntimeRAL("ip", model, txn_log=True)
 
 # Custom path
-ral = IntegratedRuntimeRAL("ip", model, txn_log="my_regs.log")
+ral = RuntimeRAL("ip", model, txn_log="my_regs.log")
 
 # Phase annotations
 ral.set_txn_phase("Phase 1: Reset value check")
@@ -155,11 +170,13 @@ Each transaction entry includes: model path, address, data, protocol, interface 
 ## Testing
 
 ```bash
-pip install -e .[dev]
-pytest
+pip install -e .[dev,rdl]
+pytest                       # pure-Python unit tests
+ruff check cocotbext/        # lint
+mypy                         # type-check
 ```
 
-146 tests covering: register model (including search / group helpers), runtime predictor (all access types), access policies, RMW safety, backdoor resolvers, runtime state, volatile policy, debug helpers, checker, JSON loader, transaction logger, and RuntimeRAL construction / reset / check-toggle helpers.
+196 pure-Python tests covering: register model (including search / group helpers, field enums, reset domains), runtime predictor (all access types, external-read side-effects), access policies, RMW safety, backdoor resolvers (including cocotb 1.x/2.x value resolution), runtime state, volatile policy, debug helpers, checker, JSON loader, RDL loader, transaction logger, RuntimeRAL construction / reset / check-toggle helpers, and the completeness features (wide-register splitting, bus-response checking, byte-strobe partial writes, callbacks, memory burst, address-offset maps). (RDL loader tests require the `rdl` extra; they skip otherwise.)
 
 ## Documentation
 
@@ -169,7 +186,7 @@ Read in this order:
 2. [Architecture](docs/ARCHITECTURE.md) -- layer-by-layer design and the rationale behind each decision.
 3. API reference (pick what you need):
    - [Core Model](docs/api/CORE_MODEL.md) -- `RegisterModel`, `Register`, `RegisterField`, `SwAccess`.
-   - [Runtime API](docs/api/RUNTIME_API.md) -- `IntegratedRuntimeRAL`, `SafeRuntimeRAL`, mirror update modes, RMW logging, search / bulk APIs.
+   - [Runtime API](docs/api/RUNTIME_API.md) -- `RuntimeRAL`, mirror update modes, RMW logging, search / bulk APIs.
    - [Integration and Loaders](docs/api/INTEGRATION_AND_LOADERS.md) -- JSON/RDL loaders, backdoor resolvers, transaction logging.
 
 ## License

@@ -31,6 +31,9 @@ field = RegisterField(
     sw_access=SwAccess.W1C,
     hdl_path="ctrl_reg.irq_status",  # optional, for backdoor access
     volatile=None,                    # None = auto-infer from access type
+    enum=None,                        # optional {name: value} encoding
+    resets=None,                      # optional {domain: value} extra resets
+    is_counter=False,                 # True for HW counter fields (volatile)
 )
 
 field.width          # 8
@@ -40,7 +43,39 @@ field.is_volatile     # False (W1C is not volatile by default)
 field.is_checkable_on_read  # True
 ```
 
-Volatile inference: if `volatile` is `None` (default), RO/RCLR/RSET fields are volatile. Explicit `volatile=True/False` overrides this.
+Volatile inference: if `volatile` is `None` (default), RO/RCLR/RSET fields (and counters) are volatile. Explicit `volatile=True/False` overrides this.
+
+### Enumerations
+
+Give a field symbolic values:
+
+```python
+mode = RegisterField("mode", lsb=0, msb=1, sw_access=SwAccess.RW,
+                     enum={"IDLE": 0, "RUN": 1, "HALT": 2})
+
+mode.enum_value("RUN")   # 1
+mode.enum_name(2)         # "HALT"
+mode.enum_name(3)         # None (unmapped)
+```
+
+`RuntimeRAL.write_field` / `set_field` accept the symbolic name, and
+`read_field_name()` returns it (see Runtime API).
+
+### Reset domains
+
+A field's primary `reset_value` is the default ("hard") reset. Additional
+named domains live in `resets`:
+
+```python
+f = RegisterField("f", 0, 3, reset_value=0x3, sw_access=SwAccess.RW,
+                  resets={"soft": 0xF})
+
+f.reset_value_for()        # 0x3  (default)
+f.reset_value_for("soft")  # 0xF
+f.reset_value_for("other") # 0x3  (falls back to default)
+```
+
+Reset a RAL by domain with `ral.reset(domain="soft")` (see Runtime API).
 
 ## Register
 
@@ -62,14 +97,17 @@ reg = Register(
     description="",
 )
 
-reg.predicted_value      # composite of all field predicted values
-reg.reset_value          # composite of all field reset values
-reg.has_backdoor         # True if any field or register has hdl_path
-reg.get_field("enable")  # returns RegisterField or None
-reg.get_writable_mask()  # 0x00FF0001 (RW + W1C bits)
-reg.get_checkable_mask() # 0x00FF0001 (RW + W1C; RO is volatile, not checked)
-reg.reset()              # restore all fields to reset values
+reg.reset_value           # composite of all field reset values
+reg.reset_value_for("soft")  # composite for a named reset domain
+reg.reset_domains()       # ["soft", ...] named domains any field defines
+reg.has_backdoor          # True if any field or register has hdl_path
+reg.get_field("enable")   # returns RegisterField or None
+reg.get_writable_mask()   # 0x00FF0001 (RW + W1C bits)
+reg.get_checkable_mask()  # 0x00FF0001 (RW + W1C; RO is volatile, not checked)
 ```
+
+The register spec is immutable structural data; mutable mirror state (and
+its reset) lives in `RuntimeState` / `RuntimeRAL` (see Runtime API).
 
 ## RegisterModel
 
@@ -98,9 +136,10 @@ for reg in model.all_registers():
     print(f"0x{reg.address:08x}: {reg.hierarchical_name}")
 
 model.register_count  # number of registers
-model.reset()         # reset all registers to defaults
 model.summary()       # formatted summary string
 ```
+
+(Mirror reset is on the runtime layer: `ral.reset()` / `ral.reset(domain=...)`.)
 
 ### Force-check RO fields
 

@@ -7,7 +7,7 @@ before performing field writes.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field as dc_field
 from typing import List
 
 from .register_model import Register, SwAccess
@@ -16,7 +16,7 @@ from .register_model import Register, SwAccess
 @dataclass
 class RmwAssessment:
     safe: bool
-    reasons: List[str] = field(default_factory=list)
+    reasons: List[str] = dc_field(default_factory=list)
 
 
 def assess_field_rmw(register: Register, field_name: str) -> RmwAssessment:

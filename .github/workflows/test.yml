@@ -8,8 +8,10 @@ on:
 
 jobs:
   test:
+    name: unit tests (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
     steps:
@@ -21,6 +23,23 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e .[dev]
-      - name: Run tests
+          pip install -e .[dev,rdl]
+      - name: Run unit tests
         run: pytest tests/ -v
+
+  lint:
+    name: lint + type-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+      - name: Ruff (lint)
+        run: ruff check cocotbext/
+      - name: Mypy (type-check)
+        run: mypy

@@ -88,5 +88,37 @@ class TestRuntimeRALBulkAttachRequired(unittest.TestCase):
         self.assertEqual(len(regs), 2)
 
 
+class _FakeHandleValue:
+    """Stand-in for cocotb BinaryValue (1.x) / LogicArray (2.x).
+
+    ``int()`` raises on X/Z just like a real LogicArray; ``str()`` yields the
+    bit string. Lets us test the resolver without a cocotb dependency.
+    """
+
+    def __init__(self, binstr: str):
+        self._s = binstr
+
+    def __int__(self) -> int:
+        if any(c in self._s for c in "xXzZuU-"):
+            raise ValueError("non-resolvable bits present")
+        return int(self._s, 2)
+
+    def __str__(self) -> str:
+        return self._s
+
+
+class TestResolveHdlValue(unittest.TestCase):
+    """Backdoor value resolution works across cocotb 1.x and 2.x handle types."""
+
+    def test_resolvable_value(self):
+        self.assertEqual(RuntimeRAL._resolve_hdl_value(_FakeHandleValue("10100101")), 0xA5)
+
+    def test_xz_bits_treated_as_zero(self):
+        self.assertEqual(RuntimeRAL._resolve_hdl_value(_FakeHandleValue("10XZ")), 0b1000)
+
+    def test_plain_int_passthrough(self):
+        self.assertEqual(RuntimeRAL._resolve_hdl_value(0x42), 0x42)
+
+
 if __name__ == "__main__":
     unittest.main()

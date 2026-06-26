@@ -1,25 +1,36 @@
 # Runtime API
 
-## IntegratedRuntimeRAL
+## RuntimeRAL
 
-The recommended entry point. Combines runtime state, RMW safety, backdoor resolution, and transaction logging.
+The RAL class. Combines runtime state, prediction/checking, front-door bus access, RMW safety, backdoor resolution, and transaction logging.
 
 ```python
-from cocotbext.ral import IntegratedRuntimeRAL
+from cocotbext.ral import RuntimeRAL
 from cocotbext.ral.adapters import load_json
 from cocotbext.ral.backdoor import PrefixBackdoorResolver
 
 model = load_json("registers.json")
 
-ral = IntegratedRuntimeRAL(
+ral = RuntimeRAL(
     name="tile_3_4",
     model=model,
     dut_handle=dut,                                          # optional, for backdoor
     backdoor_resolver=PrefixBackdoorResolver("dut.tile_3_4"), # optional
     txn_log="register_txns.log",                              # optional
+    data_width=4,            # bus width in bytes; wider regs split (APB)
+    address_offset=0,        # add to every bus address (multiple maps)
+    check_response=False,    # flag AXI SLVERR/DECERR responses
+    raise_on_bus_error=True, # when check_response: raise (vs log) on error
 )
 ral.attach_master(master, protocol="axi", interface="dut.axi_master")
 ```
+
+**Multiple address maps**: drive one `RegisterModel` through several physical
+maps by creating one RAL per map with a distinct `address_offset` — each has
+independent mirror state. See `examples/backdoor_tiled.py`.
+
+**Wide registers**: a register wider than `data_width` is split into multiple
+beats on APB; AXI lets the VIP handle the byte count.
 
 ### Front-door access
 
@@ -35,7 +46,36 @@ val = await ral.read("CTRL")
 # Field-level access (RMW with safety check)
 await ral.write_field("CTRL", "enable", 1)
 en = await ral.read_field("CTRL", "enable")
+
+# Symbolic enum field values (field defined with enum={...})
+await ral.write_field("CTRL", "mode", "RUN")    # name resolved to its value
+name = await ral.read_field_name("CTRL", "mode")  # -> "RUN"
+
+# Byte-strobe partial write: skips the RMW for a byte-aligned field,
+# driving only its bytes via the bus byte-enables.
+await ral.write_field("CTRL", "byte1", 0xAB, partial=True)
 ```
+
+### Reset
+
+```python
+ral.reset()                # restore mirror to default reset values
+ral.reset(domain="soft")   # use each field's "soft" reset (falls back to default)
+```
+
+### Callbacks (pre/post access hooks)
+
+Register hooks fired around bus access; each is `fn(ral, target, value)`:
+
+```python
+ral.add_callback("pre_write", lambda r, target, value: ...)
+ral.add_callback("post_write", lambda r, target, value: ...)
+ral.add_callback("pre_read",  lambda r, target, _: ...)       # value is None
+ral.add_callback("post_read", lambda r, target, value: ...)   # value is the read
+```
+
+Field-level and RMW accesses fire the hooks for the underlying register
+read/write they perform.
 
 ### Mirror update modes
 
@@ -46,7 +86,8 @@ respect access-policy semantics.
 | API | Bus traffic? | Mirror update style | When to use |
 |---|---|---|---|
 | `await ral.write(reg, data)` | **Yes** — drives the bus | Applies access policy (W1C clears, WO stores, RO no-op) | Normal SW write from this RAL. |
-| `ral.notify_external_write(addr, data)` | No | Applies access policy | Another agent (firmware, a second master) did a SW-style write; keep the mirror honest. |
+| `ral.notify_external_write(addr, data)` | No | Applies write access policy | Another agent (firmware, a second master) did a SW-style write; keep the mirror honest. |
+| `ral.notify_external_read(addr)` | No | Applies **read** side-effects (RCLR → 0, RSET → all-1s) | Another agent read a read-clear / read-set register; that read mutated hardware, so the mirror must follow. |
 | `ral.set_predicted(reg, value)` / `set_field_predicted(reg, field, v)` | No | **Raw overwrite** — ignores policy | Hardware drove a change (e.g. `hwset` / `hwclr`) and you want the mirror to reflect reality. |
 
 "Predicted" and "mirror" refer to the same internal shadow — they're used
@@ -200,7 +241,7 @@ transaction rather than three:
 
 Advanced: the `TransactionLogger.begin_rmw()` / `end_rmw()` hooks expose
 the buffering mechanism for custom wrappers. Typical test code never calls
-these directly — `IntegratedRuntimeRAL.write_field()` uses them internally.
+these directly — `RuntimeRAL.write_field()` uses them internally.
 
 ### Debug
 
@@ -217,34 +258,12 @@ assert not ral.has_errors()
 ral.raise_on_errors()
 ```
 
-## SafeRuntimeRAL
+### Direct runtime-state access
 
-Extends RuntimeRAL with RMW safety checking. `write_field()` raises `RuntimeError` if the read-modify-write would be unsafe (non-RW neighbor fields).
-
-```python
-from cocotbext.ral import SafeRuntimeRAL
-
-ral = SafeRuntimeRAL("ip", model, dut_handle=dut)
-ral.attach_master(master, protocol="axil")
-
-# Safe: all-RW register
-await ral.write_field("SCRATCH", "data", 0x42)
-
-# Raises RuntimeError: RO neighbor "status" makes RMW unsafe
-await ral.write_field("MIXED_REG", "ctrl", 0x01)
-```
-
-## RuntimeRAL
-
-Base runtime-backed RAL without RMW safety or backdoor. Use this when you don't need safety checks and want a lighter class.
+The RAL exposes its `RuntimeState` for low-level mirror / check manipulation
+when the higher-level helpers above don't fit:
 
 ```python
-from cocotbext.ral import RuntimeRAL
-
-ral = RuntimeRAL("ip", model)
-ral.attach_master(master, protocol="apb")
-
-# State management via runtime_state
 ral.runtime_state.disable_check(0x100, "status")
 ral.runtime_state.set_field_mirrored(0x100, "ctrl", 0x42)
 ```

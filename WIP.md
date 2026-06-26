@@ -1,94 +1,66 @@
 # Work-in-Progress / Follow-ups
 
 Captured from a design audit; not scheduled yet. Ordered roughly by value.
+Completed items are listed under "Done"; see the CHANGELOG for detail.
 
 ## High value
 
-### 1. Continuous integration
+### 1. Simulator-in-the-loop test
 
-Currently nothing verifies the 164 pytest unit tests on push / PR. A small
-GitHub Actions workflow (`pytest` on a Python 3.8-3.11 matrix, run on
-`push` and `pull_request` against `main`) would catch regressions before
-merge and give the README a status badge.
-
-Suggested layout: `.github/workflows/ci.yml`, steps = checkout, setup
-python, `pip install -e .[dev,rdl]`, `pytest -q`.
-
-### 2. Mirror-update API asymmetry
-
-`notify_external_write(addr, data)` exists for SW-style writes from
-another agent, but there is no `notify_external_read(addr)` counterpart.
-For fields with read side-effects (`RCLR`, `RSET`), an external read
-changes the hardware state, so the RAL mirror needs to know. The current
-workaround is `set_predicted`, which ignores policy.
-
-Proposed addition:
-
-```python
-def notify_external_read(self, address: int) -> None:
-    """Tell the mirror that an external agent just read this register.
-    Applies the same read side-effects (RCLR -> 0, RSET -> all-1s) that
-    the RAL's own ``read()`` would apply, without driving the bus."""
-```
-
-Drop-in to `RuntimeRAL`; reuses `AccessPolicy.apply_read_side_effect()`.
-
-### 3. SystemRDL loader coverage
-
-`cocotbext/ral/adapters/rdl_loader.py::_map_sw_access` currently handles:
-- `sw=rw` + `woclr` -> `W1C`
-- `sw=rw` -> `RW`
-- `sw=r` -> `RO`
-- `sw=w` -> `WO`
-
-Missing mappings that real SystemRDL designs use:
-- `woset` -> `W1S`
-- `rclr` property -> `RCLR`
-- `rset` property -> `RSET`
-- Composite `intr`/`mask`/`enable`/`haltmask`/`haltenable` groups.
-- `counter` property (incr/decr semantics).
-- Array elaboration already works via `unroll=True`, but explicit tests
-  would help.
-
-Scope is clearly bounded: one branch per property in the mapper plus one
-fixture per mapping in `tests/`.
+All current tests are pure Python; the cocotb bus path (`_protocol_write` /
+`_protocol_read`), the monitors, and backdoor HDL access are never exercised
+against a real DUT in a simulator. A small AXI-Lite smoke test (an
+`AxiLiteMaster` + `AxiLiteRam` over a wiring-only DUT, driven by `RuntimeRAL`,
+asserting clean prediction) run under Icarus Verilog would cover the highest-
+risk, currently-unverified code. Deferred because no simulator is available in
+the dev/CI environment used so far.
 
 ## Medium value
 
-### 4. `disable_check_all()` convenience
+### 2. Interrupt aggregation modeling
 
-Today users can disable checking per register or per field, but there is
-no single call to turn off prediction checking across the whole model.
-The workaround is:
+SystemRDL `intr` fields already load with the right access type (their
+`onwrite=woclr` maps to `W1C`), and `counter` fields load as volatile. What
+is *not* modeled is the aggregation tree -- an `intr` register's summary bit
+computed from masked sub-interrupts (`mask` / `enable` / `haltmask` /
+`haltenable`). This is largely hardware behavior the RAL observes via reads
+rather than predicts, so it would be a new, optional layer (a derived/computed
+field) rather than a change to the existing access policies. Scope it before
+committing.
 
-```python
-for reg in model.all_registers():
-    ral.disable_check(reg.hierarchical_name)
-```
+---
 
-A one-liner would be ergonomic and would make the "use the RAL just for
-access abstraction and search, not for checking" use case first-class.
-`enable_check_all()` is the obvious pair. Implement on `RuntimeRAL` and
-forward to `RuntimeState`.
+## Done (kept for reference)
 
-### 5. Example for search / bulk APIs
+- **`Development Status :: 4 - Beta`** — bumped from Alpha (v0.6.0).
 
-`examples/` has `basic_runtime_ral.py` and `axil_cocotb_demo.py` but
-nothing showing the new `find_registers` / `write_pattern` /
-`write_many` APIs. A 30-40 line `examples/search_and_bulk.py` building a
-small `DMA0..DMA7` model and driving bulk programming would make the
-feature tangible for readers.
-
-## Low value / polish
-
-### 6. `.gitignore`
-
-Not ignoring `out/`, `.ttem/`, `*.egg-info/`, `__pycache__/`,
-`.pytest_cache/`, `build/`, `dist/`, `.venv/`. These show up on every
-`git status`.
-
-### 7. `Development Status` classifier
-
-`pyproject.toml` says `Development Status :: 3 - Alpha`. If the package
-is actively used by downstream verification workspaces (edc_tb, qs5,
-etc.), `4 - Beta` is closer to reality.
+- **Continuous integration** — `.github/workflows/test.yml` runs `pytest`
+  on a Python 3.9-3.13 matrix on push / PR to `main`, installing the
+  `rdl` extra so the SystemRDL loader path is exercised.
+- **Lint + type-check in CI** — `ruff` and `mypy` run as a CI job; the
+  package is lint-clean and type-checks cleanly.
+- **`py.typed`** — ships the PEP 561 marker so downstream `mypy` / editors
+  consume the type hints.
+- **cocotb 2.x support** — library works on cocotb 1.x and 2.x; see CHANGELOG.
+- **Single runtime RAL class** — `RuntimeRAL` consolidates the former
+  `RuntimeRAL` / `SafeRuntimeRAL` / `IntegratedRuntimeRAL` chain (v0.6.0).
+- **`notify_external_read()`** — read-side-effect counterpart to
+  `notify_external_write()` (v0.6.0).
+- **Access-type side-effect loader coverage** — `woset`/`rclr`/`rset`
+  (and `woclr`) map in both the RDL and JSON loaders (v0.6.0).
+- **Field enumerations** — `enum=` on `RegisterField`, symbolic write/read,
+  loader support (v0.6.0).
+- **Reset domains** — per-field named resets + `reset(domain=...)` (v0.6.0).
+- **Wide registers on narrow buses** — APB multi-beat split via
+  `data_width=` (v0.6.0).
+- **Bus-response checking** — `check_response=` flags AXI SLVERR/DECERR
+  (v0.6.0).
+- **Byte-strobe partial writes** — `write_field(..., partial=True)` (v0.6.0).
+- **Pre/post callbacks** — `add_callback(...)` hooks around bus access
+  (v0.6.0).
+- **Memory burst** — `Memory.write_block()` / `read_block()` (v0.6.0).
+- **Multiple address maps** — `address_offset=` per RAL (v0.6.0).
+- **`disable_check_all()` / `enable_check_all()`** — on `RuntimeRAL`.
+- **`.gitignore`** — covers build/venv/cache artifacts.
+- **Examples** — `basic_runtime_ral.py`, `axil_cocotb_demo.py`,
+  `search_and_bulk.py`, `backdoor_tiled.py`.

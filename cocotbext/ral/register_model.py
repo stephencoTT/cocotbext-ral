@@ -57,6 +57,9 @@ class RegisterField:
         sw_access: SwAccess = SwAccess.RW,
         hdl_path: str = "",
         volatile: Optional[bool] = None,
+        enum: Optional[Dict[str, int]] = None,
+        resets: Optional[Dict[str, int]] = None,
+        is_counter: bool = False,
     ):
         self.name = name
         self.lsb = lsb
@@ -66,11 +69,60 @@ class RegisterField:
         self.reset_value = reset_value & self.mask
         self.sw_access = sw_access
         self.hdl_path = hdl_path
-        # If volatile is not explicitly set, infer from access type.
+        # Symbolic field encodings: {name: value}. None when the field has no
+        # enumeration. See enum_name() / enum_value().
+        self.enum: Optional[Dict[str, int]] = (
+            {k: (v & self.mask) for k, v in enum.items()} if enum else None
+        )
+        # Named reset domains: {domain_name: value}. The plain ``reset_value``
+        # above is the implicit default ("hard" / power-on) reset; ``resets``
+        # holds any additional domains (e.g. "soft"). See reset_value_for().
+        self.resets: Dict[str, int] = {
+            k: (v & self.mask) for k, v in (resets or {}).items()
+        }
+        # True for SystemRDL ``counter`` fields (hardware increments/decrements
+        # them), which therefore behave as volatile.
+        self.is_counter = is_counter
+        # If volatile is not explicitly set, infer from access type (counters
+        # are always hardware-driven, hence volatile).
         if volatile is None:
-            self.volatile = sw_access in self._VOLATILE_ACCESS_TYPES
+            self.volatile = is_counter or sw_access in self._VOLATILE_ACCESS_TYPES
         else:
             self.volatile = volatile
+
+    # ------------------------------------------------------------------
+    # Reset domains
+    # ------------------------------------------------------------------
+
+    def reset_value_for(self, domain: Optional[str] = None) -> int:
+        """Reset value for a named reset ``domain``.
+
+        ``domain=None`` (the default) returns the field's primary
+        ``reset_value``. A named domain falls back to ``reset_value`` if the
+        field does not define that domain.
+        """
+        if domain is None:
+            return self.reset_value
+        return self.resets.get(domain, self.reset_value)
+
+    # ------------------------------------------------------------------
+    # Enumerations
+    # ------------------------------------------------------------------
+
+    def enum_value(self, name: str) -> int:
+        """Resolve a symbolic enum ``name`` to its integer value."""
+        if not self.enum or name not in self.enum:
+            raise KeyError(f"Field {self.name!r} has no enum value named {name!r}")
+        return self.enum[name]
+
+    def enum_name(self, value: int) -> Optional[str]:
+        """Return the symbolic name for ``value``, or None if unmapped."""
+        if not self.enum:
+            return None
+        for n, v in self.enum.items():
+            if v == (value & self.mask):
+                return n
+        return None
 
     # Access types whose mirror can be prediction-checked on reads. The
     # runtime layer additionally gates checks on RuntimeState.check_enabled
@@ -140,6 +192,24 @@ class Register:
         for f in self.fields:
             value |= (f.reset_value & f.mask) << f.lsb
         return value
+
+    def reset_value_for(self, domain: Optional[str] = None) -> int:
+        """Composite register reset value for a named reset ``domain``.
+
+        ``domain=None`` returns the primary reset value; a named domain uses
+        each field's per-domain value, falling back to its default.
+        """
+        value = 0
+        for f in self.fields:
+            value |= (f.reset_value_for(domain) & f.mask) << f.lsb
+        return value
+
+    def reset_domains(self) -> List[str]:
+        """Sorted list of named reset domains defined by any field."""
+        domains: set = set()
+        for f in self.fields:
+            domains.update(f.resets.keys())
+        return sorted(domains)
 
     @property
     def has_backdoor(self) -> bool:
@@ -260,6 +330,31 @@ class Memory:
             f"(0x{addr:08x}) -> 0x{val:x}"
         )
         return val
+
+    async def write_block(self, offset: int, data: List[int], word_bytes: int = 4) -> None:
+        """Write a contiguous block of words starting at base + offset.
+
+        Issues one bus transaction per word at ``word_bytes`` stride, following
+        the UVM ``uvm_mem.burst_write`` pattern. (Whether the underlying VIP
+        coalesces these into a burst is a bus-driver concern.)
+        """
+        if self._ral is None:
+            raise RuntimeError("Memory not attached to a RAL instance")
+        for i, word in enumerate(data):
+            await self._ral._protocol_write(
+                self.base_address + offset + i * word_bytes, word, word_bytes
+            )
+
+    async def read_block(self, offset: int, count: int, word_bytes: int = 4) -> List[int]:
+        """Read ``count`` contiguous words starting at base + offset."""
+        if self._ral is None:
+            raise RuntimeError("Memory not attached to a RAL instance")
+        return [
+            await self._ral._protocol_read(
+                self.base_address + offset + i * word_bytes, word_bytes
+            )
+            for i in range(count)
+        ]
 
     def __repr__(self):
         return (
@@ -435,10 +530,10 @@ class RegisterModel:
 
         name_matcher: Optional[Callable[[str], bool]] = None
         if name is not None:
-            name_matcher = lambda s, p=name: fnmatch.fnmatchcase(s, p)
+            name_matcher = lambda s, p=name: fnmatch.fnmatchcase(s, p)  # type: ignore[misc]
         elif regex is not None:
             compiled = _re.compile(regex)
-            name_matcher = lambda s, r=compiled: r.search(s) is not None
+            name_matcher = lambda s, r=compiled: r.search(s) is not None  # type: ignore[misc]
 
         def _matches(reg: "Register") -> bool:
             if name_matcher is not None and not name_matcher(reg.hierarchical_name):
@@ -492,10 +587,10 @@ class RegisterModel:
 
         field_matcher: Optional[Callable[[str], bool]] = None
         if name is not None:
-            field_matcher = lambda s, p=name: fnmatch.fnmatchcase(s, p)
+            field_matcher = lambda s, p=name: fnmatch.fnmatchcase(s, p)  # type: ignore[misc]
         elif regex is not None:
             compiled = _re.compile(regex)
-            field_matcher = lambda s, r=compiled: r.search(s) is not None
+            field_matcher = lambda s, r=compiled: r.search(s) is not None  # type: ignore[misc]
 
         results: List[Tuple[Register, RegisterField]] = []
         for reg in reg_candidates:

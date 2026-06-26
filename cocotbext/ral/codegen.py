@@ -29,7 +29,7 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
-from .register_model import RegisterModel, Memory
+from .register_model import RegisterModel
 
 
 def _sanitize(name: str) -> str:
@@ -120,7 +120,7 @@ def generate_namespace(
         lines.append("")
 
     # Emit root instance
-    lines.append(f"# Root namespace instance — import this")
+    lines.append("# Root namespace instance — import this")
     lines.append(f"{root_name} = _{root_name}()")
     lines.append("")
 
