@@ -28,16 +28,11 @@ rather than predicts, so it would be a new, optional layer (a derived/computed
 field) rather than a change to the existing access policies. Scope it before
 committing.
 
-## Low value / polish
-
-### 3. `Development Status` classifier
-
-`pyproject.toml` says `Development Status :: 3 - Alpha`. If the package
-is in active downstream use, `4 - Beta` is closer to reality.
-
 ---
 
 ## Done (kept for reference)
+
+- **`Development Status :: 4 - Beta`** — bumped from Alpha (v0.6.0).
 
 - **Continuous integration** — `.github/workflows/test.yml` runs `pytest`
   on a Python 3.9-3.13 matrix on push / PR to `main`, installing the
